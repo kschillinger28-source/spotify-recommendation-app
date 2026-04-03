@@ -17,6 +17,7 @@ const elements = {
   refreshToken: document.getElementById("refreshToken"),
   refreshTokenButton: document.getElementById("refreshTokenButton"),
   trackUri: document.getElementById("trackUri"),
+  queueFromUriButton: document.getElementById("queueFromUriButton"),
   trackSearchQuery: document.getElementById("trackSearchQuery"),
   searchTracksButton: document.getElementById("searchTracksButton"),
   searchResults: document.getElementById("searchResults"),
@@ -30,7 +31,28 @@ const elements = {
   statusLog: document.getElementById("statusLog"),
   fallbackCard: document.getElementById("fallbackCard"),
   fallbackReason: document.getElementById("fallbackReason"),
-  fallbackTimestamp: document.getElementById("fallbackTimestamp")
+  fallbackTimestamp: document.getElementById("fallbackTimestamp"),
+  nowPlayingAlbumArt: document.getElementById("nowPlayingAlbumArt"),
+  nowPlayingTitle: document.getElementById("nowPlayingTitle"),
+  nowPlayingArtist: document.getElementById("nowPlayingArtist"),
+  nowPlayingAlbum: document.getElementById("nowPlayingAlbum"),
+  nowPlayingProgressBar: document.getElementById("nowPlayingProgressBar"),
+  nowPlayingProgressText: document.getElementById("nowPlayingProgressText"),
+  nowPlayingRemainingText: document.getElementById("nowPlayingRemainingText"),
+  refreshNowPlayingButton: document.getElementById("refreshNowPlayingButton"),
+  generateRecommendationButton: document.getElementById("generateRecommendationButton"),
+  recommendationStatus: document.getElementById("recommendationStatus"),
+  recommendationPrimary: document.getElementById("recommendationPrimary"),
+  recommendationAlbumArt: document.getElementById("recommendationAlbumArt"),
+  recommendationTitle: document.getElementById("recommendationTitle"),
+  recommendationArtist: document.getElementById("recommendationArtist"),
+  recommendationPlan: document.getElementById("recommendationPlan"),
+  recommendationScoreChip: document.getElementById("recommendationScoreChip"),
+  recommendationOffsetChip: document.getElementById("recommendationOffsetChip"),
+  recommendationCandidates: document.getElementById("recommendationCandidates"),
+  useRecommendationButton: document.getElementById("useRecommendationButton"),
+  queueRecommendationButton: document.getElementById("queueRecommendationButton"),
+  queueTopCandidatesButton: document.getElementById("queueTopCandidatesButton")
 };
 
 let pollingIntervalId = null;
@@ -39,6 +61,9 @@ let searchInFlight = false;
 let searchDebounceTimerId = null;
 let pendingSearchAfterInFlight = false;
 let refreshInFlightPromise = null;
+let nowPlayingIntervalId = null;
+let recommendationInFlight = false;
+let latestRecommendationPlan = null;
 
 const PROVIDER_DISPLAY_NAMES = {
   spotify: "Spotify",
@@ -55,21 +80,21 @@ function isProviderSupported(provider) {
 }
 
 function normalizeTrackUri(input) {
-  const rawInput = String(input ?? "").trim().replace(/^["']|["']$/g, "");
+  const rawInput = String(input ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
   if (!rawInput) {
     return null;
   }
 
-  if (rawInput.startsWith("spotify:track:")) {
-    const maybeCleanUri = rawInput.split("?")[0].split("#")[0];
-    const id = maybeCleanUri.split(":")[2];
-    if (id && /^[A-Za-z0-9]{22}$/.test(id)) {
-      return `spotify:track:${id}`;
-    }
-    return null;
+  const idPattern = /^[A-Za-z0-9]{22}$/;
+  const spotifyUriMatch = rawInput.match(/spotify:track:([A-Za-z0-9]{22})/i);
+  if (spotifyUriMatch?.[1] && idPattern.test(spotifyUriMatch[1])) {
+    return `spotify:track:${spotifyUriMatch[1]}`;
   }
 
-  if (/^[A-Za-z0-9]{22}$/.test(rawInput)) {
+  if (idPattern.test(rawInput)) {
     return `spotify:track:${rawInput}`;
   }
 
@@ -77,16 +102,27 @@ function normalizeTrackUri(input) {
     const parsedUrl = new URL(rawInput);
     const host = parsedUrl.hostname.toLowerCase();
     const pathnameParts = parsedUrl.pathname.split("/").filter(Boolean);
+    const trackIdInPath = parsedUrl.pathname.match(
+      /\/track\/([A-Za-z0-9]{22})(?:[/?#]|$)/i
+    )?.[1];
     if (
       (host === "open.spotify.com" || host.endsWith(".spotify.com")) &&
-      pathnameParts[0] === "track" &&
-      pathnameParts[1] &&
-      /^[A-Za-z0-9]{22}$/.test(pathnameParts[1])
+      ((pathnameParts[0] === "track" &&
+        pathnameParts[1] &&
+        idPattern.test(pathnameParts[1])) ||
+        (trackIdInPath && idPattern.test(trackIdInPath)))
     ) {
-      return `spotify:track:${pathnameParts[1]}`;
+      return `spotify:track:${pathnameParts[1] ?? trackIdInPath}`;
     }
   } catch {
     // Not a URL. Fall through and return null.
+  }
+
+  const spotifyUrlMatch = rawInput.match(
+    /open\.spotify\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:embed\/)?track\/([A-Za-z0-9]{22})/i
+  );
+  if (spotifyUrlMatch?.[1] && idPattern.test(spotifyUrlMatch[1])) {
+    return `spotify:track:${spotifyUrlMatch[1]}`;
   }
 
   return null;
@@ -98,6 +134,7 @@ function setTrackInput(trackUri) {
 }
 
 function setActionButtonsDisabled(disabled) {
+  elements.queueFromUriButton.disabled = disabled;
   elements.quickPlayNowButton.disabled = disabled;
   elements.quickQueueOnlyButton.disabled = disabled;
   elements.quickQueueAndSeekButton.disabled = disabled;
@@ -154,7 +191,9 @@ function renderSearchResults(tracks) {
     useButton.textContent = "Use This Track";
     useButton.addEventListener("click", () => {
       setTrackInput(track.uri);
-      logStatus(`Selected "${track.name}" (${track.uri}).`);
+      logStatus(
+        `Selected "${track.name}" (${track.uri}) into Track URI. Queue from URI or use Quick Actions.`
+      );
     });
 
     const playNowButton = document.createElement("button");
@@ -224,6 +263,204 @@ function parseNonNegativeNumber(rawValue, fieldName, defaultValue = 0) {
   }
 
   return parsed;
+}
+
+function setAlbumArt(imageElement, imageUrl, altText) {
+  if (imageUrl) {
+    imageElement.src = imageUrl;
+    imageElement.alt = altText;
+    return;
+  }
+
+  imageElement.removeAttribute("src");
+  imageElement.alt = "Album art unavailable";
+}
+
+function renderNowPlayingEmpty(message = "No active playback") {
+  setAlbumArt(elements.nowPlayingAlbumArt, null, "No album art");
+  elements.nowPlayingTitle.textContent = message;
+  elements.nowPlayingArtist.textContent = "Start a song in Spotify to load details.";
+  elements.nowPlayingAlbum.textContent = "";
+  elements.nowPlayingProgressBar.style.width = "0%";
+  elements.nowPlayingProgressText.textContent = "0:00 / 0:00";
+  elements.nowPlayingRemainingText.textContent = "remaining 0:00";
+}
+
+function renderNowPlaying(playbackPayload) {
+  const playback = playbackPayload?.playback;
+  const item = playback?.item;
+
+  if (!playbackPayload?.hasActivePlayback || !item) {
+    renderNowPlayingEmpty();
+    return;
+  }
+
+  const artistText = (item.artists ?? []).map((artist) => artist.name).join(", ");
+  const durationMs = Number(item.duration_ms) || 0;
+  const progressMs = Math.max(0, Number(playback.progress_ms) || 0);
+  const remainingMs = Math.max(0, durationMs - progressMs);
+  const isPlaying = Boolean(playback?.is_playing);
+  const progressPercent =
+    durationMs > 0 ? Math.max(0, Math.min(100, (progressMs / durationMs) * 100)) : 0;
+
+  setAlbumArt(
+    elements.nowPlayingAlbumArt,
+    item.album?.images?.[0]?.url ?? item.album?.images?.[1]?.url ?? null,
+    `${item.name} album art`
+  );
+  elements.nowPlayingTitle.textContent = item.name || "Unknown track";
+  elements.nowPlayingArtist.textContent = artistText || "Unknown artist";
+  elements.nowPlayingAlbum.textContent = item.album?.name
+    ? `Album: ${item.album.name}`
+    : "";
+  elements.nowPlayingProgressBar.style.width = `${progressPercent.toFixed(1)}%`;
+  elements.nowPlayingProgressText.textContent = `${formatMs(progressMs)} / ${formatMs(
+    durationMs
+  )}`;
+  elements.nowPlayingRemainingText.textContent = isPlaying
+    ? `remaining ${formatMs(remainingMs)}`
+    : `paused at ${formatMs(progressMs)}`;
+}
+
+async function refreshNowPlaying({ silent = false } = {}) {
+  const provider = getSelectedProvider();
+  if (!isProviderSupported(provider)) {
+    renderNowPlayingEmpty("Now playing is available for Spotify only.");
+    return;
+  }
+
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) {
+    renderNowPlayingEmpty("Add access token to load now playing.");
+    return;
+  }
+
+  try {
+    const payload = await apiRequest(
+      "/auth/spotify/player/current",
+      "GET",
+      accessToken
+    );
+    renderNowPlaying(payload);
+  } catch (error) {
+    if (!silent) {
+      logStatus(`Could not refresh now playing: ${error.message}`);
+    }
+    renderNowPlayingEmpty("Could not load now playing.");
+  }
+}
+
+function stopNowPlayingPolling() {
+  if (nowPlayingIntervalId !== null) {
+    window.clearInterval(nowPlayingIntervalId);
+    nowPlayingIntervalId = null;
+  }
+}
+
+function startNowPlayingPolling() {
+  stopNowPlayingPolling();
+  nowPlayingIntervalId = window.setInterval(() => {
+    refreshNowPlaying({ silent: true });
+  }, 5000);
+}
+
+function updateRecommendationButtons() {
+  const providerSupported = isProviderSupported(getSelectedProvider());
+  const hasRecommendation = Boolean(latestRecommendationPlan?.selectedCandidate?.uri);
+  const hasTopCandidates = (latestRecommendationPlan?.topCandidates?.length ?? 0) > 0;
+  elements.generateRecommendationButton.disabled =
+    !providerSupported || recommendationInFlight;
+  elements.useRecommendationButton.disabled = !providerSupported || !hasRecommendation;
+  elements.queueRecommendationButton.disabled = !providerSupported || !hasRecommendation;
+  elements.queueTopCandidatesButton.disabled = !providerSupported || !hasTopCandidates;
+}
+
+function clearRecommendationUi(message) {
+  latestRecommendationPlan = null;
+  elements.recommendationPrimary.classList.add("hidden");
+  elements.recommendationCandidates.innerHTML = "";
+  elements.recommendationStatus.textContent = message;
+  updateRecommendationButtons();
+}
+
+function renderRecommendationPlan(plan) {
+  latestRecommendationPlan = plan;
+
+  const selected = plan?.selectedCandidate;
+  const transitionPlan = plan?.transitionPlan;
+  const entryPoint = plan?.entryPoint;
+  if (!selected || !transitionPlan || !entryPoint) {
+    clearRecommendationUi("Recommendation response was missing expected fields.");
+    return;
+  }
+
+  setAlbumArt(
+    elements.recommendationAlbumArt,
+    selected.albumImageUrl ?? null,
+    `${selected.name} album art`
+  );
+  elements.recommendationTitle.textContent = selected.name || "Unknown track";
+  elements.recommendationArtist.textContent =
+    (selected.artistNames ?? []).join(", ") || "Unknown artist";
+  elements.recommendationPlan.textContent = transitionPlan.strategy;
+  elements.recommendationScoreChip.textContent = `Score ${selected.score}/100`;
+  elements.recommendationOffsetChip.textContent = `Start ${entryPoint.recommendedOffsetSeconds}s`;
+  elements.recommendationPrimary.classList.remove("hidden");
+
+  elements.recommendationStatus.textContent =
+    `Scanned ${plan?.candidateSelection?.totalCandidates ?? 0} candidates. ` +
+    `Best fit: ${selected.name}.`;
+
+  elements.recommendationCandidates.innerHTML = "";
+  (plan.topCandidates ?? []).forEach((candidate, index) => {
+    const item = document.createElement("div");
+    item.className = "candidate-item";
+    item.textContent = `${index + 1}. ${candidate.name} - ${(
+      candidate.artistNames ?? []
+    ).join(", ")} | score ${candidate.score}/100 | source ${candidate.source}`;
+    elements.recommendationCandidates.appendChild(item);
+  });
+
+  updateRecommendationButtons();
+}
+
+function getTopRecommendationQueuePlan(limit = 3) {
+  const candidates = latestRecommendationPlan?.topCandidates ?? [];
+  const queuePlan = [];
+  const seenUris = new Set();
+
+  for (const candidate of candidates) {
+    if (!candidate?.uri || seenUris.has(candidate.uri)) {
+      continue;
+    }
+    seenUris.add(candidate.uri);
+    queuePlan.push({
+      uri: candidate.uri,
+      name: candidate.name ?? candidate.uri
+    });
+    if (queuePlan.length >= limit) {
+      break;
+    }
+  }
+
+  return queuePlan;
+}
+
+function applyRecommendationToInputs() {
+  const selected = latestRecommendationPlan?.selectedCandidate;
+  const transitionPlan = latestRecommendationPlan?.transitionPlan;
+  if (!selected || !transitionPlan) {
+    throw new Error("Generate a recommendation first.");
+  }
+
+  setTrackInput(selected.uri);
+  elements.offsetSeconds.value = String(transitionPlan.recommendedOffsetSeconds);
+  elements.seekDelaySeconds.value = String(
+    transitionPlan.recommendedSeekDelaySeconds
+  );
+  elements.autoSeekEnabled.checked = true;
+  updateAutoSeekUi();
+  saveInputsToLocalStorage();
 }
 
 function showFallback(reason, desiredOffsetMs) {
@@ -353,17 +590,29 @@ function updateProviderUi() {
   elements.refreshToken.disabled = !providerSupported;
   elements.refreshTokenButton.disabled = !providerSupported;
   elements.trackUri.disabled = !providerSupported;
+  elements.queueFromUriButton.disabled = !providerSupported;
   elements.trackSearchQuery.disabled = !providerSupported;
   elements.searchTracksButton.disabled = !providerSupported;
   elements.deviceId.disabled = !providerSupported;
+  elements.refreshNowPlayingButton.disabled = !providerSupported;
 
   if (!providerSupported) {
     clearSearchResults(
       `${providerName} search is coming soon. Switch to Spotify for live search.`
     );
+    clearRecommendationUi(`${providerName} recommendation engine is coming soon.`);
+    renderNowPlayingEmpty("Now playing is available for Spotify only.");
+    stopNowPlayingPolling();
+  } else {
+    if (!latestRecommendationPlan && elements.recommendationStatus.textContent.trim() === "") {
+      elements.recommendationStatus.textContent =
+        "Generate a plan to score the next best track.";
+    }
+    startNowPlayingPolling();
   }
 
   updateAutoSeekUi();
+  updateRecommendationButtons();
 }
 
 function getPendingQueueTarget() {
@@ -626,6 +875,8 @@ function startPollingForQueuedTrack(pendingTarget, accessToken) {
 
   let attempts = 0;
   const maxAttempts = 75;
+  let lastPlaybackStatusKey = "";
+  let hasLoggedWaitingForDevice = false;
 
   pollingIntervalId = window.setInterval(async () => {
     if (pollInFlight) {
@@ -642,14 +893,24 @@ function startPollingForQueuedTrack(pendingTarget, accessToken) {
       );
 
       if (!playbackState?.hasActivePlayback || !playbackState?.playback) {
-        if (attempts % 5 === 0) {
+        if (!hasLoggedWaitingForDevice) {
           logStatus("Waiting for active Spotify playback device...");
+          hasLoggedWaitingForDevice = true;
+          lastPlaybackStatusKey = "";
         }
       } else {
+        hasLoggedWaitingForDevice = false;
         const currentUri = playbackState.playback?.item?.uri;
-        if (attempts % 4 === 0) {
+        const isPlaying = Boolean(playbackState.playback?.is_playing);
+        const statusKey = `${currentUri ?? "none"}:${isPlaying ? "playing" : "paused"}`;
+        if (statusKey !== lastPlaybackStatusKey) {
           const name = playbackState.playback?.item?.name ?? "unknown";
-          logStatus(`Current playback: ${name}`);
+          if (isPlaying) {
+            logStatus(`Playback changed: now playing ${name}.`);
+          } else {
+            logStatus(`Playback changed: ${name} is selected but paused.`);
+          }
+          lastPlaybackStatusKey = statusKey;
         }
 
         if (
@@ -818,6 +1079,10 @@ async function handleQueueOnlyClick() {
   await handleQueueAction({ forceQueueOnly: true });
 }
 
+async function handleQueueFromUriClick() {
+  await handleQueueAction({ forceQueueOnly: true });
+}
+
 async function handleQueueAndSeekClick() {
   await handleQueueAction({ forceQueueOnly: false });
 }
@@ -903,19 +1168,153 @@ async function handleManualRefreshTokenClick() {
   }
 }
 
+async function handleRefreshNowPlayingClick() {
+  elements.refreshNowPlayingButton.disabled = true;
+  try {
+    await refreshNowPlaying({ silent: false });
+  } finally {
+    updateProviderUi();
+  }
+}
+
+async function handleGenerateRecommendationClick() {
+  const provider = getSelectedProvider();
+  if (!isProviderSupported(provider)) {
+    const providerName = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+    clearRecommendationUi(`${providerName} recommendation engine is coming soon.`);
+    return;
+  }
+
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) {
+    clearRecommendationUi("Add your access token first, then generate a plan.");
+    return;
+  }
+
+  recommendationInFlight = true;
+  updateRecommendationButtons();
+  elements.recommendationStatus.textContent = "Generating recommendation plan...";
+
+  try {
+    const plan = await apiRequest(
+      "/auth/spotify/recommend/next",
+      "GET",
+      accessToken
+    );
+    renderRecommendationPlan(plan);
+    logStatus(
+      `Recommendation generated: ${plan?.selectedCandidate?.name ?? "unknown track"}`
+    );
+    await refreshNowPlaying({ silent: true });
+  } catch (error) {
+    clearRecommendationUi(`Recommendation failed: ${error.message}`);
+    logStatus(`Recommendation failed: ${error.message}`);
+  } finally {
+    recommendationInFlight = false;
+    updateRecommendationButtons();
+  }
+}
+
+function handleUseRecommendationClick() {
+  try {
+    applyRecommendationToInputs();
+    logStatus("Applied recommendation to queue inputs.");
+  } catch (error) {
+    logStatus(`Could not apply recommendation: ${error.message}`);
+  }
+}
+
+async function handleQueueRecommendationClick() {
+  try {
+    applyRecommendationToInputs();
+    await handleQueueAction({
+      forceQueueOnly: false,
+      trackUriOverride: latestRecommendationPlan?.selectedCandidate?.uri ?? null
+    });
+  } catch (error) {
+    logStatus(`Could not queue recommendation: ${error.message}`);
+  }
+}
+
+async function handleQueueTopCandidatesClick() {
+  try {
+    const provider = getSelectedProvider();
+    if (!isProviderSupported(provider)) {
+      const providerName = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+      throw new Error(
+        `${providerName} support is coming soon. Switch provider to Spotify for now.`
+      );
+    }
+
+    const accessToken = elements.accessToken.value.trim();
+    if (!accessToken) {
+      throw new Error("Please provide an access token.");
+    }
+
+    const deviceId = elements.deviceId.value.trim();
+    const queuePlan = getTopRecommendationQueuePlan(3);
+    if (!queuePlan.length) {
+      throw new Error("Generate recommendations first.");
+    }
+
+    setActionButtonsDisabled(true);
+    recommendationInFlight = true;
+    updateRecommendationButtons();
+
+    for (const item of queuePlan) {
+      await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
+        trackUri: item.uri,
+        deviceId: deviceId || undefined
+      });
+    }
+
+    const queueNames = queuePlan.map((item) => item.name).join(", ");
+    logStatus(`Queued top ${queuePlan.length} recommendations: ${queueNames}.`);
+    elements.recommendationStatus.textContent =
+      `Queued top ${queuePlan.length} scored tracks in order.`;
+  } catch (error) {
+    logStatus(`Could not queue top recommendations: ${error.message}`);
+  } finally {
+    recommendationInFlight = false;
+    setActionButtonsDisabled(false);
+    updateRecommendationButtons();
+  }
+}
+
 function bindEvents() {
   elements.provider.addEventListener("change", () => {
     updateProviderUi();
     saveInputsToLocalStorage();
   });
   elements.quickPlayNowButton.addEventListener("click", handlePlayNowClick);
+  elements.queueFromUriButton.addEventListener("click", handleQueueFromUriClick);
   elements.quickQueueOnlyButton.addEventListener("click", handleQueueOnlyClick);
   elements.quickQueueAndSeekButton.addEventListener("click", handleQueueAndSeekClick);
   elements.refreshTokenButton.addEventListener("click", handleManualRefreshTokenClick);
+  elements.refreshNowPlayingButton.addEventListener("click", handleRefreshNowPlayingClick);
+  elements.generateRecommendationButton.addEventListener(
+    "click",
+    handleGenerateRecommendationClick
+  );
+  elements.useRecommendationButton.addEventListener(
+    "click",
+    handleUseRecommendationClick
+  );
+  elements.queueRecommendationButton.addEventListener(
+    "click",
+    handleQueueRecommendationClick
+  );
+  elements.queueTopCandidatesButton.addEventListener(
+    "click",
+    handleQueueTopCandidatesClick
+  );
   elements.searchTracksButton.addEventListener("click", () =>
     searchTracks({ source: "manual" })
   );
-  elements.accessToken.addEventListener("change", saveInputsToLocalStorage);
+  elements.accessToken.addEventListener("change", () => {
+    saveInputsToLocalStorage();
+    refreshNowPlaying({ silent: true });
+  });
   elements.refreshToken.addEventListener("change", saveInputsToLocalStorage);
   elements.trackUri.addEventListener("change", saveInputsToLocalStorage);
   elements.trackSearchQuery.addEventListener("change", saveInputsToLocalStorage);
@@ -954,9 +1353,13 @@ function init() {
   applyTokensFromUrlIfPresent();
   updateProviderUi();
   updateAutoSeekUi();
+  clearRecommendationUi("Generate a plan to score the next best track.");
+  renderNowPlayingEmpty();
   clearSearchResults("Search by song, artist, or words, then pick a result.");
   bindEvents();
   maybeResumePendingQueueWatcher();
+  refreshNowPlaying({ silent: true });
+  startNowPlayingPolling();
 }
 
 init();

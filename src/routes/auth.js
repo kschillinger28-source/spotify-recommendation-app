@@ -11,26 +11,37 @@ import {
   seekCurrentPlayback,
   refreshAccessToken
 } from "../utils/spotify.js";
+import { buildNextSongRecommendation } from "../services/recommendationEngine.js";
 
 const router = Router();
 const SPOTIFY_STATE_COOKIE = "spotify_oauth_state";
+const OAUTH_STATE_TTL_MS = 1000 * 60 * 10;
+const issuedOauthStates = new Map();
+
+function pruneExpiredOauthStates(nowMs = Date.now()) {
+  for (const [state, expiresAtMs] of issuedOauthStates.entries()) {
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
+      issuedOauthStates.delete(state);
+    }
+  }
+}
 
 function normalizeTrackUri(input) {
-  const rawInput = String(input ?? "").trim().replace(/^["']|["']$/g, "");
+  const rawInput = String(input ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
   if (!rawInput) {
     return null;
   }
 
-  if (rawInput.startsWith("spotify:track:")) {
-    const maybeCleanUri = rawInput.split("?")[0].split("#")[0];
-    const id = maybeCleanUri.split(":")[2];
-    if (id && /^[A-Za-z0-9]{22}$/.test(id)) {
-      return `spotify:track:${id}`;
-    }
-    return null;
+  const idPattern = /^[A-Za-z0-9]{22}$/;
+  const spotifyUriMatch = rawInput.match(/spotify:track:([A-Za-z0-9]{22})/i);
+  if (spotifyUriMatch?.[1] && idPattern.test(spotifyUriMatch[1])) {
+    return `spotify:track:${spotifyUriMatch[1]}`;
   }
 
-  if (/^[A-Za-z0-9]{22}$/.test(rawInput)) {
+  if (idPattern.test(rawInput)) {
     return `spotify:track:${rawInput}`;
   }
 
@@ -38,16 +49,27 @@ function normalizeTrackUri(input) {
     const parsedUrl = new URL(rawInput);
     const host = parsedUrl.hostname.toLowerCase();
     const pathnameParts = parsedUrl.pathname.split("/").filter(Boolean);
+    const trackIdInPath = parsedUrl.pathname.match(
+      /\/track\/([A-Za-z0-9]{22})(?:[/?#]|$)/i
+    )?.[1];
     if (
       (host === "open.spotify.com" || host.endsWith(".spotify.com")) &&
-      pathnameParts[0] === "track" &&
-      pathnameParts[1] &&
-      /^[A-Za-z0-9]{22}$/.test(pathnameParts[1])
+      ((pathnameParts[0] === "track" &&
+        pathnameParts[1] &&
+        idPattern.test(pathnameParts[1])) ||
+        (trackIdInPath && idPattern.test(trackIdInPath)))
     ) {
-      return `spotify:track:${pathnameParts[1]}`;
+      return `spotify:track:${pathnameParts[1] ?? trackIdInPath}`;
     }
   } catch {
     // Not a URL. Fall through and return null.
+  }
+
+  const spotifyUrlMatch = rawInput.match(
+    /open\.spotify\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:embed\/)?track\/([A-Za-z0-9]{22})/i
+  );
+  if (spotifyUrlMatch?.[1] && idPattern.test(spotifyUrlMatch[1])) {
+    return `spotify:track:${spotifyUrlMatch[1]}`;
   }
 
   return null;
@@ -63,7 +85,9 @@ function getBearerTokenFromRequest(req) {
 }
 
 router.get("/spotify/login", (req, res) => {
+  pruneExpiredOauthStates();
   const state = crypto.randomBytes(24).toString("hex");
+  issuedOauthStates.set(state, Date.now() + OAUTH_STATE_TTL_MS);
   const authorizeUrl = buildSpotifyAuthorizeUrl(state);
 
   res.cookie(SPOTIFY_STATE_COOKIE, state, {
@@ -78,7 +102,7 @@ router.get("/spotify/login", (req, res) => {
 
 router.get("/spotify/callback", async (req, res) => {
   const code = req.query.code;
-  const state = req.query.state;
+  const state = String(req.query.state ?? "");
   const storedState = req.cookies[SPOTIFY_STATE_COOKIE];
 
   if (!code || !state) {
@@ -87,7 +111,14 @@ router.get("/spotify/callback", async (req, res) => {
     });
   }
 
-  if (!storedState || storedState !== state) {
+  pruneExpiredOauthStates();
+  const nowMs = Date.now();
+  const isCookieStateValid = Boolean(storedState && storedState === state);
+  const serverStateExpiryMs = issuedOauthStates.get(state);
+  const isServerStateValid =
+    Number.isFinite(serverStateExpiryMs) && serverStateExpiryMs > nowMs;
+
+  if (!isCookieStateValid && !isServerStateValid) {
     return res.status(400).json({
       error: "Invalid OAuth state. Try logging in again."
     });
@@ -96,6 +127,7 @@ router.get("/spotify/callback", async (req, res) => {
   try {
     const tokens = await exchangeCodeForTokens(String(code));
     res.clearCookie(SPOTIFY_STATE_COOKIE);
+    issuedOauthStates.delete(state);
 
     return res.status(200).json({
       message: "Spotify OAuth completed successfully.",
@@ -328,6 +360,26 @@ router.put("/spotify/player/play-now", async (req, res) => {
   } catch (error) {
     return res.status(502).json({
       error: "Could not start Spotify playback.",
+      details: error.message
+    });
+  }
+});
+
+router.get("/spotify/recommend/next", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+
+  try {
+    const recommendation = await buildNextSongRecommendation(token);
+    return res.status(200).json(recommendation);
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not build next-song recommendation plan.",
       details: error.message
     });
   }

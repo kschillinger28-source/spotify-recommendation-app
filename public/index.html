@@ -115,6 +115,72 @@
         flex-wrap: wrap;
       }
 
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .section-head h2 {
+        margin: 0;
+      }
+
+      .ghost-button {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+      }
+
+      .now-playing-content {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 14px;
+        margin-top: 12px;
+      }
+
+      .album-art {
+        width: 92px;
+        height: 92px;
+        border-radius: 10px;
+        object-fit: cover;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .track-title {
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .track-sub {
+        color: #c5d3f8;
+        font-size: 14px;
+        margin-top: 4px;
+      }
+
+      .progress-shell {
+        margin-top: 12px;
+        width: 100%;
+        height: 8px;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        width: 0%;
+        height: 100%;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #00d1ff 0%, #7eff9f 100%);
+      }
+
+      .time-row {
+        margin-top: 8px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #b2c2ee;
+      }
+
       .search-row {
         display: flex;
         gap: 10px;
@@ -172,6 +238,38 @@
         font-size: 14px;
       }
 
+      .recommendation-primary {
+        margin-top: 12px;
+        border: 1px solid rgba(157, 255, 215, 0.35);
+        border-radius: 10px;
+        padding: 12px;
+        background: rgba(8, 30, 24, 0.45);
+      }
+
+      .score-chip {
+        display: inline-block;
+        margin-top: 8px;
+        margin-right: 8px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(0, 209, 255, 0.2);
+        color: #d6f8ff;
+      }
+
+      .candidate-list {
+        margin-top: 10px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .candidate-item {
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
       #fallbackCard {
         border-color: rgba(255, 189, 110, 0.8);
         background: rgba(79, 38, 5, 0.6);
@@ -211,10 +309,67 @@
   <body>
     <div class="ambient"></div>
     <main class="container">
-      <h1>Music Queue + Smart Seek</h1>
+      <h1>Music Queue + Smart Transition</h1>
       <p>
-        Queue tracks fast, keep your vibe flowing, and optionally jump to a recommended timestamp.
+        Minimal control center for Spotify queueing, now-playing context, and heuristic next-song planning.
       </p>
+
+      <section id="nowPlayingCard" class="card">
+        <div class="section-head">
+          <h2>Now Playing</h2>
+          <button id="refreshNowPlayingButton" type="button" class="ghost-button">Refresh</button>
+        </div>
+        <div class="now-playing-content">
+          <img id="nowPlayingAlbumArt" class="album-art" alt="Album art" />
+          <div>
+            <div id="nowPlayingTitle" class="track-title">No active playback</div>
+            <div id="nowPlayingArtist" class="track-sub">Start a song in Spotify to load details.</div>
+            <div id="nowPlayingAlbum" class="track-sub"></div>
+            <div class="progress-shell">
+              <div id="nowPlayingProgressBar" class="progress-fill"></div>
+            </div>
+            <div class="time-row">
+              <span id="nowPlayingProgressText">0:00 / 0:00</span>
+              <span id="nowPlayingRemainingText">remaining 0:00</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="recommendationCard" class="card">
+        <div class="section-head">
+          <h2>Smart Next Song</h2>
+          <button id="generateRecommendationButton" type="button">Generate Plan</button>
+        </div>
+        <p class="hint">
+          Uses heuristics (not ML): candidate pool, compatibility scoring, entry-point scoring, and transition planning.
+        </p>
+        <p id="recommendationStatus" class="hint">Generate a plan to score the next best track.</p>
+        <div id="recommendationPrimary" class="recommendation-primary hidden">
+          <div class="now-playing-content">
+            <img id="recommendationAlbumArt" class="album-art" alt="Recommended album art" />
+            <div>
+              <div id="recommendationTitle" class="track-title"></div>
+              <div id="recommendationArtist" class="track-sub"></div>
+              <div id="recommendationPlan" class="track-sub"></div>
+              <div>
+                <span id="recommendationScoreChip" class="score-chip"></span>
+                <span id="recommendationOffsetChip" class="score-chip"></span>
+              </div>
+            </div>
+          </div>
+          <div class="button-row" style="margin-top: 10px">
+            <button id="useRecommendationButton" type="button" class="ghost-button">
+              Use In Inputs
+            </button>
+            <button id="queueRecommendationButton" type="button">Queue Best + Seek</button>
+            <button id="queueTopCandidatesButton" type="button" class="ghost-button">
+              Queue Top 3
+            </button>
+          </div>
+        </div>
+        <div id="recommendationCandidates" class="candidate-list"></div>
+      </section>
 
       <section class="card">
         <div class="field">
@@ -250,8 +405,13 @@
 
         <div class="field">
           <label for="trackUri">Track URI to Queue</label>
-          <input id="trackUri" type="text" placeholder="spotify:track:4iV5W9uYEdYUVa79Axb7Rh" />
-          <p class="hint">You can also paste a Spotify track link or track ID.</p>
+          <div class="search-row">
+            <input id="trackUri" type="text" placeholder="spotify:track:4iV5W9uYEdYUVa79Axb7Rh" />
+            <button id="queueFromUriButton" type="button">Queue URI</button>
+          </div>
+          <p class="hint">
+            You can paste a Spotify track link or track ID. "Use This Track" from search fills this field.
+          </p>
         </div>
 
         <div class="field">

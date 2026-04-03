@@ -1,4 +1,4 @@
-# Music Queue Helper (Phase 1 + 2 + 6 + 7)
+# Music Queue Helper (Current MVP)
 
 This project intentionally includes only:
 

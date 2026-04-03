@@ -64,6 +64,32 @@ async function parseJsonSafely(response) {
   }
 }
 
+function mapSpotifyTrack(track) {
+  if (!track) {
+    return null;
+  }
+
+  return {
+    id: track.id,
+    uri: track.uri,
+    name: track.name,
+    artistNames: (track.artists ?? []).map((artist) => artist.name),
+    artists: (track.artists ?? []).map((artist) => ({
+      id: artist.id,
+      name: artist.name
+    })),
+    albumName: track.album?.name ?? "",
+    albumImageUrl:
+      track.album?.images?.[0]?.url ??
+      track.album?.images?.[1]?.url ??
+      null,
+    durationMs: track.duration_ms ?? 0,
+    explicit: Boolean(track.explicit),
+    popularity: Number.isFinite(track.popularity) ? track.popularity : 0,
+    externalUrl: track.external_urls?.spotify ?? null
+  };
+}
+
 async function spotifyApiRequest({
   method = "GET",
   path,
@@ -197,14 +223,93 @@ export async function searchSpotifyTracks(accessToken, query, limit = 10) {
   });
 
   const items = payload?.tracks?.items ?? [];
-  return items.map((track) => ({
-    id: track.id,
-    uri: track.uri,
-    name: track.name,
-    artistNames: (track.artists ?? []).map((artist) => artist.name),
-    albumName: track.album?.name ?? "",
-    durationMs: track.duration_ms ?? 0,
-    explicit: Boolean(track.explicit),
-    externalUrl: track.external_urls?.spotify ?? null
-  }));
+  return items.map((track) => mapSpotifyTrack(track)).filter(Boolean);
+}
+
+export async function getUserTopTracks(
+  accessToken,
+  { limit = 20, timeRange = "medium_term" } = {}
+) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+  const safeTimeRange = ["short_term", "medium_term", "long_term"].includes(
+    timeRange
+  )
+    ? timeRange
+    : "medium_term";
+
+  const payload = await spotifyApiRequest({
+    method: "GET",
+    path: "/me/top/tracks",
+    accessToken,
+    queryParams: {
+      limit: safeLimit,
+      time_range: safeTimeRange
+    }
+  });
+
+  const items = payload?.items ?? [];
+  return items.map((track) => mapSpotifyTrack(track)).filter(Boolean);
+}
+
+export async function getSpotifyRecommendations(
+  accessToken,
+  {
+    seedTrackIds = [],
+    seedArtistIds = [],
+    seedGenres = [],
+    limit = 20
+  } = {}
+) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+  const tracks = seedTrackIds.filter(Boolean).slice(0, 5);
+  const artists = seedArtistIds.filter(Boolean).slice(0, 5);
+  const genres = seedGenres.filter(Boolean).slice(0, 5);
+
+  const seedsCount = tracks.length + artists.length + genres.length;
+  if (seedsCount === 0) {
+    throw new Error("At least one seed is required for Spotify recommendations.");
+  }
+
+  if (seedsCount > 5) {
+    const allowedTrackSeeds = tracks.slice(0, 3);
+    const remaining = 5 - allowedTrackSeeds.length;
+    const allowedArtistSeeds = artists.slice(0, Math.max(0, remaining));
+    const remainingAfterArtists = 5 - allowedTrackSeeds.length - allowedArtistSeeds.length;
+    const allowedGenreSeeds = genres.slice(0, Math.max(0, remainingAfterArtists));
+
+    return getSpotifyRecommendations(accessToken, {
+      seedTrackIds: allowedTrackSeeds,
+      seedArtistIds: allowedArtistSeeds,
+      seedGenres: allowedGenreSeeds,
+      limit: safeLimit
+    });
+  }
+
+  const payload = await spotifyApiRequest({
+    method: "GET",
+    path: "/recommendations",
+    accessToken,
+    queryParams: {
+      limit: safeLimit,
+      seed_tracks: tracks.join(","),
+      seed_artists: artists.join(","),
+      seed_genres: genres.join(",")
+    }
+  });
+
+  const items = payload?.tracks ?? [];
+  return items.map((track) => mapSpotifyTrack(track)).filter(Boolean);
+}
+
+export async function getPlaybackQueue(accessToken) {
+  const payload = await spotifyApiRequest({
+    method: "GET",
+    path: "/me/player/queue",
+    accessToken
+  });
+
+  const queueItems = payload?.queue ?? [];
+  return queueItems
+    .map((item) => (item?.type === "track" ? mapSpotifyTrack(item) : null))
+    .filter(Boolean);
 }
