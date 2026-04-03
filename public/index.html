@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi-Platform Queue + Seek Helper</title>
+    <style>
+      :root {
+        font-family: Arial, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        background: radial-gradient(circle at 10% 20%, #2b174f 0%, #0e1633 45%, #080b18 100%);
+        color: #f3f7ff;
+        min-height: 100vh;
+      }
+
+      .ambient {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image:
+          radial-gradient(circle at 20% 80%, rgba(0, 209, 255, 0.25), transparent 35%),
+          radial-gradient(circle at 80% 15%, rgba(255, 0, 214, 0.2), transparent 30%),
+          radial-gradient(circle at 55% 45%, rgba(130, 255, 121, 0.12), transparent 28%);
+      }
+
+      .container {
+        max-width: 760px;
+        margin: 24px auto 48px;
+        padding: 0 16px 110px;
+        position: relative;
+        z-index: 1;
+      }
+
+      h1 {
+        margin-bottom: 8px;
+      }
+
+      p {
+        line-height: 1.45;
+      }
+
+      .card {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 12px;
+        padding: 16px;
+        margin-top: 16px;
+        background: rgba(7, 13, 33, 0.72);
+        backdrop-filter: blur(5px);
+      }
+
+      .field {
+        margin-bottom: 12px;
+      }
+
+      .field label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      .field input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid rgba(201, 214, 255, 0.35);
+        border-radius: 6px;
+        font-size: 14px;
+        box-sizing: border-box;
+        background: rgba(10, 17, 40, 0.75);
+        color: #eff3ff;
+      }
+
+      .field select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid rgba(201, 214, 255, 0.35);
+        border-radius: 6px;
+        font-size: 14px;
+        box-sizing: border-box;
+        background: rgba(10, 17, 40, 0.75);
+        color: #eff3ff;
+      }
+
+      .field input[type="checkbox"] {
+        width: auto;
+        margin-right: 8px;
+      }
+
+      .inline-toggle {
+        display: flex;
+        align-items: center;
+      }
+
+      button {
+        background: #1976d2;
+        color: #ffffff;
+        border: 0;
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        background: #8bb8e7;
+        cursor: not-allowed;
+      }
+
+      .button-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .search-row {
+        display: flex;
+        gap: 10px;
+      }
+
+      .search-row input {
+        flex: 1;
+      }
+
+      .hint {
+        color: #b2c2ee;
+        font-size: 13px;
+      }
+
+      #providerStatus {
+        color: #9ff6cd;
+      }
+
+      #statusLog {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      #searchResults {
+        margin-top: 10px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .result-item {
+        border: 1px solid rgba(201, 214, 255, 0.3);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(10, 17, 40, 0.55);
+      }
+
+      .result-title {
+        font-weight: 700;
+      }
+
+      .result-meta {
+        font-size: 13px;
+        color: #b2c2ee;
+        margin: 4px 0 8px;
+      }
+
+      .result-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .result-empty {
+        color: #b2c2ee;
+        font-size: 14px;
+      }
+
+      #fallbackCard {
+        border-color: rgba(255, 189, 110, 0.8);
+        background: rgba(79, 38, 5, 0.6);
+      }
+
+      #fallbackCard.hidden {
+        display: none;
+      }
+
+      code {
+        background: rgba(255, 255, 255, 0.15);
+        padding: 2px 4px;
+        border-radius: 4px;
+      }
+
+      .quick-dock {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 12px;
+        width: min(760px, calc(100% - 24px));
+        padding: 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(7, 13, 33, 0.92);
+        backdrop-filter: blur(6px);
+        z-index: 5;
+      }
+
+      .quick-dock-title {
+        font-size: 12px;
+        color: #b2c2ee;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ambient"></div>
+    <main class="container">
+      <h1>Music Queue + Smart Seek</h1>
+      <p>
+        Queue tracks fast, keep your vibe flowing, and optionally jump to a recommended timestamp.
+      </p>
+
+      <section class="card">
+        <div class="field">
+          <label for="provider">Music Provider</label>
+          <select id="provider">
+            <option value="spotify">Spotify (supported)</option>
+            <option value="soundcloud">SoundCloud (coming soon)</option>
+            <option value="apple_music">Apple Music (coming soon)</option>
+          </select>
+          <p id="providerStatus" class="hint">
+            Spotify support is active. SoundCloud and Apple Music UI is staged for future integration.
+          </p>
+        </div>
+
+        <div class="field">
+          <label id="accessTokenLabel" for="accessToken">Spotify Access Token</label>
+          <input id="accessToken" type="text" placeholder="BQ..." autocomplete="off" />
+          <p class="hint">
+            Get this from <code>/auth/spotify/callback</code>. It is stored in your browser local storage for this local tool.
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="refreshToken">Spotify Refresh Token (one-time setup)</label>
+          <div class="search-row">
+            <input id="refreshToken" type="text" placeholder="AQ..." autocomplete="off" />
+            <button id="refreshTokenButton" type="button">Refresh Token</button>
+          </div>
+          <p class="hint">
+            Paste refresh token once from callback JSON. App will auto-refresh expired access tokens.
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="trackUri">Track URI to Queue</label>
+          <input id="trackUri" type="text" placeholder="spotify:track:4iV5W9uYEdYUVa79Axb7Rh" />
+          <p class="hint">You can also paste a Spotify track link or track ID.</p>
+        </div>
+
+        <div class="field">
+          <label for="trackSearchQuery">Find Track by Song or Artist</label>
+          <div class="search-row">
+            <input id="trackSearchQuery" type="text" placeholder="Search by song title, artist, or keywords" />
+            <button id="searchTracksButton" type="button">Search Now</button>
+          </div>
+          <p class="hint">
+            Auto-search runs as you type. You can also click Search Now.
+          </p>
+          <div id="searchResults"></div>
+        </div>
+
+        <div class="field">
+          <label for="offsetSeconds">Recommended Start Offset (seconds)</label>
+          <input id="offsetSeconds" type="number" min="0" step="1" placeholder="42" />
+          <p class="hint">Saved locally so your preferred offset survives refresh/restart.</p>
+        </div>
+
+        <div class="field">
+          <label class="inline-toggle" for="autoSeekEnabled">
+            <input id="autoSeekEnabled" type="checkbox" checked />
+            Auto-seek when queued song becomes current
+          </label>
+          <p class="hint">
+            Turn this off to keep Spotify native fade/mix behavior and only queue songs.
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="seekDelaySeconds">Seek Delay (seconds)</label>
+          <input id="seekDelaySeconds" type="number" min="0" step="1" placeholder="0" />
+          <p class="hint">
+            Optional delay before seek after the target song starts (helps transitions feel less abrupt).
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="deviceId">Device ID (optional)</label>
+          <input id="deviceId" type="text" placeholder="Spotify device id" />
+          <p class="hint">Leave empty to use whichever active device Spotify picks.</p>
+        </div>
+
+      </section>
+
+      <section class="card">
+        <h2>Status</h2>
+        <ul id="statusLog"></ul>
+      </section>
+
+      <section id="fallbackCard" class="card hidden">
+        <h2>Manual Fallback</h2>
+        <p id="fallbackReason"></p>
+        <p>
+          Move the seek bar manually to:
+          <strong id="fallbackTimestamp">0:00</strong>
+        </p>
+        <p class="hint">
+          This happens when Spotify rejects seek commands, has no active device, or reports delayed playback state.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Known Limits</h2>
+        <ul>
+          <li>Spotify queue/seek only works on an active playback device.</li>
+          <li>Some accounts/devices do not support all playback controls.</li>
+          <li>Playback state can lag a few seconds, so seek verification can be noisy.</li>
+          <li>If this tool cannot verify seek, use the manual fallback timestamp.</li>
+        </ul>
+      </section>
+    </main>
+
+    <section class="quick-dock">
+      <div class="quick-dock-title">Quick Actions (always visible)</div>
+      <div class="button-row">
+        <button id="quickPlayNowButton">Play Track Now</button>
+        <button id="quickQueueOnlyButton">Queue Song Only</button>
+        <button id="quickQueueAndSeekButton">Queue + Auto Seek</button>
+      </div>
+    </section>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
