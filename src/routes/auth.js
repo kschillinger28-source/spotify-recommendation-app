@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Router } from "express";
+import { env } from "../config/env.js";
 import {
   addTrackToQueue,
   buildSpotifyAuthorizeUrl,
@@ -11,6 +12,7 @@ import {
   resumePlayback,
   searchSpotifyTracks,
   seekCurrentPlayback,
+  setPlaybackVolume,
   refreshAccessToken,
   skipToNext,
   skipToPrevious
@@ -88,6 +90,119 @@ function getBearerTokenFromRequest(req) {
   return authHeader.slice("Bearer ".length);
 }
 
+function sanitizeLooseTokenString(rawValue) {
+  return String(rawValue ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
+}
+
+function looksLikeOpaqueToken(value) {
+  return /^[A-Za-z0-9._-]{20,}$/.test(value);
+}
+
+function extractRefreshTokenFromLooseInput(rawValue) {
+  const normalized = sanitizeLooseTokenString(rawValue);
+  if (!normalized) {
+    return "";
+  }
+
+  if (looksLikeOpaqueToken(normalized) && !normalized.includes("{")) {
+    return normalized;
+  }
+
+  const regexPatterns = [
+    /["']refresh_token["']\s*:\s*["']([^"']+)["']/i,
+    /["']refreshToken["']\s*:\s*["']([^"']+)["']/i,
+    /\brefresh_token=([^&\s]+)/i
+  ];
+
+  for (const regex of regexPatterns) {
+    const match = normalized.match(regex);
+    if (!match?.[1]) {
+      continue;
+    }
+    const candidate = sanitizeLooseTokenString(
+      (() => {
+        try {
+          return decodeURIComponent(match[1]);
+        } catch {
+          return match[1];
+        }
+      })()
+    );
+    if (looksLikeOpaqueToken(candidate)) {
+      return candidate;
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(normalized);
+    const candidates = [
+      parsed?.refreshToken,
+      parsed?.refresh_token,
+      parsed?.token,
+      parsed?.tokens?.refresh_token,
+      parsed?.tokens?.refreshToken
+    ];
+    for (const candidate of candidates) {
+      const cleaned = sanitizeLooseTokenString(candidate);
+      if (looksLikeOpaqueToken(cleaned)) {
+        return cleaned;
+      }
+    }
+  } catch {
+    // Ignore parse errors and fall through.
+  }
+
+  return "";
+}
+
+function getRefreshTokenFromRequestBody(body) {
+  const directCandidates = [
+    body?.refreshToken,
+    body?.refresh_token,
+    body?.token,
+    body?.tokens?.refresh_token,
+    body?.tokens?.refreshToken
+  ];
+
+  for (const candidate of directCandidates) {
+    const extracted = extractRefreshTokenFromLooseInput(candidate);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return extractRefreshTokenFromLooseInput(body);
+}
+
+function wantsJsonCallbackResponse(req) {
+  return String(req.query.format ?? "").toLowerCase() === "json";
+}
+
+function buildOAuthCallbackRedirectUrl({ tokens, error }) {
+  const redirectUrl = new URL(env.appBaseUrl);
+  redirectUrl.pathname = "/";
+  redirectUrl.search = "";
+
+  const hashParams = new URLSearchParams();
+  if (tokens?.access_token) {
+    hashParams.set("access_token", String(tokens.access_token));
+  }
+  if (tokens?.refresh_token) {
+    hashParams.set("refresh_token", String(tokens.refresh_token));
+  }
+  if (error) {
+    hashParams.set("auth_error", String(error));
+  } else {
+    hashParams.set("auth", "success");
+  }
+
+  redirectUrl.hash = hashParams.toString();
+  return redirectUrl.toString();
+}
+
 router.get("/spotify/login", (req, res) => {
   pruneExpiredOauthStates();
   const state = crypto.randomBytes(24).toString("hex");
@@ -110,6 +225,13 @@ router.get("/spotify/callback", async (req, res) => {
   const storedState = req.cookies[SPOTIFY_STATE_COOKIE];
 
   if (!code || !state) {
+    if (!wantsJsonCallbackResponse(req)) {
+      return res.redirect(
+        buildOAuthCallbackRedirectUrl({
+          error: "Missing code or state from Spotify callback."
+        })
+      );
+    }
     return res.status(400).json({
       error: "Missing code or state from Spotify callback."
     });
@@ -123,6 +245,13 @@ router.get("/spotify/callback", async (req, res) => {
     Number.isFinite(serverStateExpiryMs) && serverStateExpiryMs > nowMs;
 
   if (!isCookieStateValid && !isServerStateValid) {
+    if (!wantsJsonCallbackResponse(req)) {
+      return res.redirect(
+        buildOAuthCallbackRedirectUrl({
+          error: "Invalid OAuth state. Try logging in again."
+        })
+      );
+    }
     return res.status(400).json({
       error: "Invalid OAuth state. Try logging in again."
     });
@@ -133,11 +262,26 @@ router.get("/spotify/callback", async (req, res) => {
     res.clearCookie(SPOTIFY_STATE_COOKIE);
     issuedOauthStates.delete(state);
 
+    if (!wantsJsonCallbackResponse(req)) {
+      return res.redirect(
+        buildOAuthCallbackRedirectUrl({
+          tokens
+        })
+      );
+    }
+
     return res.status(200).json({
       message: "Spotify OAuth completed successfully.",
       tokens
     });
   } catch (error) {
+    if (!wantsJsonCallbackResponse(req)) {
+      return res.redirect(
+        buildOAuthCallbackRedirectUrl({
+          error: `Spotify token exchange failed: ${error.message}`
+        })
+      );
+    }
     return res.status(502).json({
       error: "Spotify token exchange failed.",
       details: error.message
@@ -146,11 +290,12 @@ router.get("/spotify/callback", async (req, res) => {
 });
 
 router.post("/spotify/refresh", async (req, res) => {
-  const refreshToken = req.body?.refreshToken;
+  const refreshToken = getRefreshTokenFromRequestBody(req.body);
 
   if (!refreshToken) {
     return res.status(400).json({
-      error: "Missing refreshToken in request body."
+      error:
+        "Missing refresh token in request body. Provide refreshToken, refresh_token, or JSON containing refresh_token."
     });
   }
 
@@ -314,6 +459,37 @@ router.put("/spotify/player/seek", async (req, res) => {
   } catch (error) {
     return res.status(502).json({
       error: "Could not seek current Spotify playback.",
+      details: error.message
+    });
+  }
+});
+
+router.put("/spotify/player/volume", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const volumePercent = Number(req.body?.volumePercent);
+  const deviceId = req.body?.deviceId;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+
+  if (!Number.isFinite(volumePercent) || volumePercent < 0 || volumePercent > 100) {
+    return res.status(400).json({
+      error: "volumePercent must be a number between 0 and 100."
+    });
+  }
+
+  try {
+    const result = await setPlaybackVolume(token, volumePercent, deviceId);
+    return res.status(200).json({
+      message: "Playback volume updated.",
+      ...result
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not update Spotify playback volume.",
       details: error.message
     });
   }

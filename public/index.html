@@ -345,6 +345,9 @@
           Uses heuristics (not ML): candidate pool, compatibility scoring, entry-point scoring, and transition planning.
         </p>
         <p id="recommendationStatus" class="hint">Generate a plan to score the next best track.</p>
+        <p id="recommendationScoreNote" class="hint">
+          Score is a heuristic fit (0-100). Higher means better transition fit based on artist continuity, popularity fit, duration fit, BPM/energy compatibility, explicit match, source confidence, and repeat-avoidance.
+        </p>
         <div id="recommendationPrimary" class="recommendation-primary hidden">
           <div class="now-playing-content">
             <img id="recommendationAlbumArt" class="album-art" alt="Recommended album art" />
@@ -386,9 +389,12 @@
 
         <div class="field">
           <label id="accessTokenLabel" for="accessToken">Spotify Access Token</label>
+          <div class="button-row" style="margin-bottom: 8px">
+            <button id="connectSpotifyButton" type="button">Connect Spotify</button>
+          </div>
           <input id="accessToken" type="text" placeholder="BQ..." autocomplete="off" />
           <p class="hint">
-            Get this from <code>/auth/spotify/callback</code>. It is stored in your browser local storage for this local tool.
+            Easiest path: click Connect Spotify and authorize once. Tokens are imported automatically.
           </p>
         </div>
 
@@ -447,6 +453,24 @@
           <input id="seekDelaySeconds" type="number" min="0" step="1" placeholder="0" />
           <p class="hint">
             Optional delay before seek after the target song starts (helps transitions feel less abrupt).
+          </p>
+        </div>
+
+        <div class="field">
+          <label class="inline-toggle" for="smoothTransitionEnabled">
+            <input id="smoothTransitionEnabled" type="checkbox" checked />
+            Smooth DJ transition (fade around seek)
+          </label>
+          <p class="hint">
+            Instead of a hard jump, fades volume down before seek and fades back up after seek.
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="smoothFadeSeconds">Fade Duration (seconds)</label>
+          <input id="smoothFadeSeconds" type="number" min="0.2" max="6" step="0.1" placeholder="1.2" />
+          <p class="hint">
+            Total fade window around seek. Spotify API cannot time-stretch playback speed, but recommendations now favor BPM-compatible transitions.
           </p>
         </div>
 

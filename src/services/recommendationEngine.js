@@ -1,4 +1,5 @@
 import {
+  getAudioFeaturesByTrackIds,
   getCurrentPlayback,
   getPlaybackQueue,
   getSpotifyRecommendations,
@@ -66,6 +67,17 @@ function sourceBonus(source) {
   return 4;
 }
 
+function computeTempoDistanceBpm(aTempo, bTempo) {
+  if (!Number.isFinite(aTempo) || !Number.isFinite(bTempo) || aTempo <= 0 || bTempo <= 0) {
+    return null;
+  }
+
+  const direct = Math.abs(aTempo - bTempo);
+  const halfDoubleA = Math.abs(aTempo * 2 - bTempo);
+  const halfDoubleB = Math.abs(aTempo - bTempo * 2);
+  return Math.min(direct, halfDoubleA, halfDoubleB);
+}
+
 function scoreNextSongCandidate(candidate, context) {
   const currentTrack = context.currentTrack;
   const primaryCandidateArtistId = candidate.artists?.[0]?.id ?? null;
@@ -85,6 +97,13 @@ function scoreNextSongCandidate(candidate, context) {
   );
   const durationGapSeconds = Math.abs(candidate.durationMs - currentTrack.durationMs) / 1000;
   const durationFit = Math.max(0, 16 - durationGapSeconds * 0.2);
+  const tempoDistance = computeTempoDistanceBpm(currentTrack.tempo, candidate.tempo);
+  const bpmFit =
+    tempoDistance === null ? 3 : Math.max(0, 14 - Math.min(28, tempoDistance) * 0.5);
+  const energyGap = Number.isFinite(currentTrack.energy) && Number.isFinite(candidate.energy)
+    ? Math.abs(currentTrack.energy - candidate.energy)
+    : null;
+  const energyFit = energyGap === null ? 2 : Math.max(0, 8 - energyGap * 16);
   const explicitFit = candidate.explicit === currentTrack.explicit ? 6 : -2;
   const sourceFit = sourceBonus(candidate.source);
   const repeatPenalty = context.recentUris.has(candidate.uri) ? -20 : 0;
@@ -95,6 +114,8 @@ function scoreNextSongCandidate(candidate, context) {
         artistContinuity +
         popularityFit +
         durationFit +
+        bpmFit +
+        energyFit +
         explicitFit +
         sourceFit +
         repeatPenalty
@@ -113,6 +134,12 @@ function scoreNextSongCandidate(candidate, context) {
   if (durationFit >= 10) {
     reasons.push("similar track length keeps pacing stable");
   }
+  if (bpmFit >= 8) {
+    reasons.push("BPM is close to current track for smoother handoff");
+  }
+  if (energyFit >= 5) {
+    reasons.push("energy level is compatible with current groove");
+  }
   if (sourceFit >= 10) {
     reasons.push("high-confidence Spotify recommendation source");
   }
@@ -126,6 +153,8 @@ function scoreNextSongCandidate(candidate, context) {
       artistContinuity: round1(artistContinuity),
       popularityFit: round1(popularityFit),
       durationFit: round1(durationFit),
+      bpmFit: round1(bpmFit),
+      energyFit: round1(energyFit),
       explicitFit: round1(explicitFit),
       sourceFit: round1(sourceFit),
       repeatPenalty: round1(repeatPenalty)
@@ -154,7 +183,14 @@ function scoreEntryPoint({ candidate, currentRemainingMs }) {
   }
 
   const capByDuration = Math.max(0, Math.min(45000, Math.round(candidate.durationMs * 0.35)));
-  const clampedOffsetMs = clamp(Math.round(offsetMs), 0, capByDuration || 45000);
+  let clampedOffsetMs = clamp(Math.round(offsetMs), 0, capByDuration || 45000);
+  const candidateTempo = Number(candidate.tempo);
+  if (Number.isFinite(candidateTempo) && candidateTempo >= 60 && candidateTempo <= 220) {
+    const beatMs = 60000 / candidateTempo;
+    const barMs = beatMs * 4;
+    clampedOffsetMs = Math.max(0, Math.round(clampedOffsetMs / barMs) * barMs);
+    clampedOffsetMs = clamp(clampedOffsetMs, 0, capByDuration || 45000);
+  }
 
   const reasons = [];
   if (candidate.durationMs < 180000) {
@@ -169,6 +205,9 @@ function scoreEntryPoint({ candidate, currentRemainingMs }) {
   }
   if ((candidate.popularity ?? 0) >= 75) {
     reasons.push("high-popularity candidate, slight hook-forward bias");
+  }
+  if (Number.isFinite(candidateTempo) && candidateTempo >= 60 && candidateTempo <= 220) {
+    reasons.push("offset quantized to beat-bar boundary for cleaner drop-in");
   }
 
   return {
@@ -256,7 +295,31 @@ export async function buildNextSongRecommendation(accessToken) {
     );
   }
 
-  const scoredCandidates = candidatePool
+  const audioFeatureIds = [
+    currentTrack.id,
+    ...candidatePool.map((candidate) => candidate.id).filter(Boolean)
+  ];
+  let audioFeaturesByTrackId = {};
+  try {
+    audioFeaturesByTrackId = await getAudioFeaturesByTrackIds(accessToken, audioFeatureIds);
+  } catch {
+    audioFeaturesByTrackId = {};
+  }
+
+  const currentFeatures = audioFeaturesByTrackId[currentTrack.id] ?? {};
+  currentTrack.tempo = Number.isFinite(currentFeatures.tempo) ? currentFeatures.tempo : null;
+  currentTrack.energy = Number.isFinite(currentFeatures.energy) ? currentFeatures.energy : null;
+
+  const enrichedCandidates = candidatePool.map((candidate) => {
+    const features = audioFeaturesByTrackId[candidate.id] ?? {};
+    return {
+      ...candidate,
+      tempo: Number.isFinite(features.tempo) ? features.tempo : null,
+      energy: Number.isFinite(features.energy) ? features.energy : null
+    };
+  });
+
+  const scoredCandidates = enrichedCandidates
     .map((candidate) => {
       const scored = scoreNextSongCandidate(candidate, {
         currentTrack,

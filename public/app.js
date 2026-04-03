@@ -7,12 +7,15 @@ const OFFSET_SECONDS_KEY = "spotify_helper_offset_seconds";
 const DEVICE_ID_KEY = "spotify_helper_device_id";
 const AUTO_SEEK_ENABLED_KEY = "spotify_helper_auto_seek_enabled";
 const SEEK_DELAY_SECONDS_KEY = "spotify_helper_seek_delay_seconds";
+const SMOOTH_TRANSITION_ENABLED_KEY = "spotify_helper_smooth_transition_enabled";
+const SMOOTH_FADE_SECONDS_KEY = "spotify_helper_smooth_fade_seconds";
 const PENDING_QUEUE_KEY = "spotify_helper_pending_queue_target";
 
 const elements = {
   provider: document.getElementById("provider"),
   providerStatus: document.getElementById("providerStatus"),
   accessTokenLabel: document.getElementById("accessTokenLabel"),
+  connectSpotifyButton: document.getElementById("connectSpotifyButton"),
   accessToken: document.getElementById("accessToken"),
   refreshToken: document.getElementById("refreshToken"),
   refreshTokenButton: document.getElementById("refreshTokenButton"),
@@ -24,6 +27,8 @@ const elements = {
   offsetSeconds: document.getElementById("offsetSeconds"),
   autoSeekEnabled: document.getElementById("autoSeekEnabled"),
   seekDelaySeconds: document.getElementById("seekDelaySeconds"),
+  smoothTransitionEnabled: document.getElementById("smoothTransitionEnabled"),
+  smoothFadeSeconds: document.getElementById("smoothFadeSeconds"),
   deviceId: document.getElementById("deviceId"),
   quickPreviousButton: document.getElementById("quickPreviousButton"),
   quickPauseResumeButton: document.getElementById("quickPauseResumeButton"),
@@ -45,6 +50,7 @@ const elements = {
   refreshNowPlayingButton: document.getElementById("refreshNowPlayingButton"),
   generateRecommendationButton: document.getElementById("generateRecommendationButton"),
   recommendationStatus: document.getElementById("recommendationStatus"),
+  recommendationScoreNote: document.getElementById("recommendationScoreNote"),
   recommendationPrimary: document.getElementById("recommendationPrimary"),
   recommendationAlbumArt: document.getElementById("recommendationAlbumArt"),
   recommendationTitle: document.getElementById("recommendationTitle"),
@@ -399,11 +405,18 @@ function updateRecommendationButtons() {
   elements.queueTopCandidatesButton.disabled = !providerSupported || !hasTopCandidates;
 }
 
+function formatSignedScorePart(value) {
+  const numeric = Math.round(Number(value) || 0);
+  return numeric > 0 ? `+${numeric}` : String(numeric);
+}
+
 function clearRecommendationUi(message) {
   latestRecommendationPlan = null;
   elements.recommendationPrimary.classList.add("hidden");
   elements.recommendationCandidates.innerHTML = "";
   elements.recommendationStatus.textContent = message;
+  elements.recommendationScoreNote.textContent =
+    "Score is a heuristic fit (0-100). Higher means better transition fit based on artist continuity, popularity fit, duration fit, BPM/energy compatibility, explicit match, source confidence, and repeat-avoidance.";
   updateRecommendationButtons();
 }
 
@@ -434,6 +447,22 @@ function renderRecommendationPlan(plan) {
   elements.recommendationStatus.textContent =
     `Scanned ${plan?.candidateSelection?.totalCandidates ?? 0} candidates. ` +
     `Best fit: ${selected.name}.`;
+
+  const scoreBreakdown = selected?.scoreBreakdown;
+  if (scoreBreakdown) {
+    elements.recommendationScoreNote.textContent =
+      `Why this score: artist ${formatSignedScorePart(scoreBreakdown.artistContinuity)}, ` +
+      `popularity ${formatSignedScorePart(scoreBreakdown.popularityFit)}, ` +
+      `duration ${formatSignedScorePart(scoreBreakdown.durationFit)}, ` +
+      `bpm ${formatSignedScorePart(scoreBreakdown.bpmFit)}, ` +
+      `energy ${formatSignedScorePart(scoreBreakdown.energyFit)}, ` +
+      `explicit ${formatSignedScorePart(scoreBreakdown.explicitFit)}, ` +
+      `source ${formatSignedScorePart(scoreBreakdown.sourceFit)}, ` +
+      `repeat ${formatSignedScorePart(scoreBreakdown.repeatPenalty)}.`;
+  } else {
+    elements.recommendationScoreNote.textContent =
+      "Score is a heuristic fit (0-100). Higher means better transition fit.";
+  }
 
   elements.recommendationCandidates.innerHTML = "";
   (plan.topCandidates ?? []).forEach((candidate, index) => {
@@ -515,6 +544,14 @@ function saveInputsToLocalStorage() {
     SEEK_DELAY_SECONDS_KEY,
     elements.seekDelaySeconds.value.trim()
   );
+  localStorage.setItem(
+    SMOOTH_TRANSITION_ENABLED_KEY,
+    elements.smoothTransitionEnabled.checked ? "true" : "false"
+  );
+  localStorage.setItem(
+    SMOOTH_FADE_SECONDS_KEY,
+    elements.smoothFadeSeconds.value.trim()
+  );
 }
 
 function loadInputsFromLocalStorage() {
@@ -532,6 +569,10 @@ function loadInputsFromLocalStorage() {
     (localStorage.getItem(AUTO_SEEK_ENABLED_KEY) ?? "true") !== "false";
   elements.seekDelaySeconds.value =
     localStorage.getItem(SEEK_DELAY_SECONDS_KEY) ?? "";
+  elements.smoothTransitionEnabled.checked =
+    (localStorage.getItem(SMOOTH_TRANSITION_ENABLED_KEY) ?? "true") !== "false";
+  elements.smoothFadeSeconds.value =
+    localStorage.getItem(SMOOTH_FADE_SECONDS_KEY) ?? "1.2";
 }
 
 function applyTokensFromUrlIfPresent() {
@@ -543,11 +584,13 @@ function applyTokensFromUrlIfPresent() {
   );
   const hashAccessToken = hashParams.get("access_token");
   const hashRefreshToken = hashParams.get("refresh_token");
+  const hashAuthStatus = hashParams.get("auth");
+  const hashAuthError = hashParams.get("auth_error");
 
   const accessToken = hashAccessToken || searchAccessToken;
   const refreshToken = hashRefreshToken || searchRefreshToken;
 
-  if (!accessToken && !refreshToken) {
+  if (!accessToken && !refreshToken && !hashAuthStatus && !hashAuthError) {
     return;
   }
 
@@ -558,11 +601,16 @@ function applyTokensFromUrlIfPresent() {
     elements.refreshToken.value = refreshToken;
   }
   saveInputsToLocalStorage();
+  if (hashAuthError) {
+    logStatus(`Spotify connect failed: ${hashAuthError}`);
+  } else if (hashAuthStatus === "success" && (accessToken || refreshToken)) {
+    logStatus("Spotify connected. Tokens imported automatically.");
+  }
 
   // Clean sensitive tokens from URL after importing.
   url.searchParams.delete("access_token");
   url.searchParams.delete("refresh_token");
-  if (hashAccessToken || hashRefreshToken) {
+  if (hashAccessToken || hashRefreshToken || hashAuthStatus || hashAuthError) {
     url.hash = "";
   }
   const cleanUrl =
@@ -578,6 +626,9 @@ function updateAutoSeekUi() {
   elements.autoSeekEnabled.disabled = !providerSupported;
   elements.offsetSeconds.disabled = !providerSupported || !enabled;
   elements.seekDelaySeconds.disabled = !providerSupported || !enabled;
+  elements.smoothTransitionEnabled.disabled = !providerSupported || !enabled;
+  elements.smoothFadeSeconds.disabled =
+    !providerSupported || !enabled || !elements.smoothTransitionEnabled.checked;
 
   if (!providerSupported) {
     setActionButtonsDisabled(true);
@@ -611,6 +662,7 @@ function updateProviderUi() {
   }
 
   elements.accessToken.disabled = !providerSupported;
+  elements.connectSpotifyButton.disabled = !providerSupported;
   elements.refreshToken.disabled = !providerSupported;
   elements.refreshTokenButton.disabled = !providerSupported;
   elements.trackUri.disabled = !providerSupported;
@@ -666,6 +718,88 @@ function isTokenExpiredMessage(message) {
   return value.includes("token expired") || value.includes("access token expired");
 }
 
+function sanitizeLooseTokenString(rawValue) {
+  return String(rawValue ?? "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
+}
+
+function looksLikeOpaqueToken(value) {
+  return /^[A-Za-z0-9._-]{20,}$/.test(value);
+}
+
+function extractTokenFromLooseInput(rawValue, tokenKey) {
+  const normalized = sanitizeLooseTokenString(rawValue);
+  if (!normalized) {
+    return "";
+  }
+
+  if (looksLikeOpaqueToken(normalized) && !normalized.includes("{")) {
+    return normalized;
+  }
+
+  const patternsByKey = {
+    access_token: [
+      /["']access_token["']\s*:\s*["']([^"']+)["']/i,
+      /["']accessToken["']\s*:\s*["']([^"']+)["']/i,
+      /\baccess_token=([^&\s]+)/i
+    ],
+    refresh_token: [
+      /["']refresh_token["']\s*:\s*["']([^"']+)["']/i,
+      /["']refreshToken["']\s*:\s*["']([^"']+)["']/i,
+      /\brefresh_token=([^&\s]+)/i
+    ]
+  };
+
+  const keyPatterns = patternsByKey[tokenKey] ?? [];
+  for (const pattern of keyPatterns) {
+    const match = normalized.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+    const decoded = sanitizeLooseTokenString(
+      (() => {
+        try {
+          return decodeURIComponent(match[1]);
+        } catch {
+          return match[1];
+        }
+      })()
+    );
+    if (looksLikeOpaqueToken(decoded)) {
+      return decoded;
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(normalized);
+    const accessCandidates = [
+      parsed?.access_token,
+      parsed?.accessToken,
+      parsed?.tokens?.access_token,
+      parsed?.tokens?.accessToken
+    ];
+    const refreshCandidates = [
+      parsed?.refresh_token,
+      parsed?.refreshToken,
+      parsed?.tokens?.refresh_token,
+      parsed?.tokens?.refreshToken
+    ];
+    const candidates = tokenKey === "access_token" ? accessCandidates : refreshCandidates;
+    for (const candidate of candidates) {
+      const cleaned = sanitizeLooseTokenString(candidate);
+      if (looksLikeOpaqueToken(cleaned)) {
+        return cleaned;
+      }
+    }
+  } catch {
+    // Ignore parse errors and return empty below.
+  }
+
+  return "";
+}
+
 function applyFreshTokens(tokens, oldRefreshToken = "") {
   const newAccessToken = tokens?.access_token;
   if (!newAccessToken) {
@@ -679,11 +813,27 @@ function applyFreshTokens(tokens, oldRefreshToken = "") {
 }
 
 async function refreshAccessTokenIfPossible({ silent = false } = {}) {
-  const refreshToken = elements.refreshToken.value.trim();
+  const rawRefreshInput = elements.refreshToken.value;
+  const refreshToken = extractTokenFromLooseInput(
+    rawRefreshInput,
+    "refresh_token"
+  );
   if (!refreshToken) {
     throw new Error(
       "Access token expired. Add your refresh token once to enable auto-refresh."
     );
+  }
+
+  if (elements.refreshToken.value.trim() !== refreshToken) {
+    elements.refreshToken.value = refreshToken;
+    const maybeAccessFromSamePaste = extractTokenFromLooseInput(
+      rawRefreshInput,
+      "access_token"
+    );
+    if (maybeAccessFromSamePaste && !elements.accessToken.value.trim()) {
+      elements.accessToken.value = maybeAccessFromSamePaste;
+    }
+    saveInputsToLocalStorage();
   }
 
   if (refreshInFlightPromise) {
@@ -840,28 +990,127 @@ function stopPolling() {
   }
 }
 
-async function attemptSeekAndVerify(pendingTarget, accessToken) {
-  if (pendingTarget.seekDelayMs > 0) {
-    logStatus(
-      `Track is current. Waiting ${Math.round(
-        pendingTarget.seekDelayMs / 1000
-      )}s before seek.`
+async function waitMs(durationMs) {
+  await new Promise((resolve) => window.setTimeout(resolve, durationMs));
+}
+
+async function setPlaybackVolume(accessToken, volumePercent, deviceId) {
+  await apiRequest("/auth/spotify/player/volume", "PUT", accessToken, {
+    volumePercent,
+    deviceId: deviceId || undefined
+  });
+}
+
+async function fadeVolume({
+  accessToken,
+  fromVolumePercent,
+  toVolumePercent,
+  durationMs,
+  deviceId
+}) {
+  const steps = Math.max(2, Math.min(8, Math.round(durationMs / 220)));
+  const stepDelayMs = Math.max(40, Math.round(durationMs / steps));
+
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps;
+    const nextVolume = Math.round(
+      fromVolumePercent + (toVolumePercent - fromVolumePercent) * ratio
     );
-    await new Promise((resolve) =>
-      window.setTimeout(resolve, pendingTarget.seekDelayMs)
-    );
+    await setPlaybackVolume(accessToken, nextVolume, deviceId);
+    if (step < steps) {
+      await waitMs(stepDelayMs);
+    }
   }
+}
+
+async function runSmoothDjSeekTransition(
+  pendingTarget,
+  accessToken,
+  detectionPlaybackState
+) {
+  const detectedVolume = Number(
+    detectionPlaybackState?.playback?.device?.volume_percent
+  );
+  const baseVolume = Number.isFinite(detectedVolume)
+    ? Math.max(12, Math.min(100, Math.round(detectedVolume)))
+    : 65;
+  const fadeDurationMs = Math.max(
+    200,
+    Math.min(6000, Number(pendingTarget.smoothFadeDurationMs) || 1200)
+  );
+  const fadeHalfMs = Math.max(120, Math.round(fadeDurationMs / 2));
+  const dippedVolume = Math.max(8, Math.round(baseVolume * 0.35));
 
   logStatus(
-    `Attempting seek to ${formatMs(pendingTarget.desiredOffsetMs)}.`
+    `Applying DJ fade transition (${Math.round(
+      fadeDurationMs / 1000
+    )}s total) before seek.`
   );
+
+  try {
+    await fadeVolume({
+      accessToken,
+      fromVolumePercent: baseVolume,
+      toVolumePercent: dippedVolume,
+      durationMs: fadeHalfMs,
+      deviceId: pendingTarget.deviceId
+    });
+  } catch (error) {
+    logStatus(`Fade-down skipped: ${error.message}`);
+  }
 
   await apiRequest("/auth/spotify/player/seek", "PUT", accessToken, {
     positionMs: pendingTarget.desiredOffsetMs,
     deviceId: pendingTarget.deviceId ?? undefined
   });
 
-  await new Promise((resolve) => window.setTimeout(resolve, 1200));
+  await waitMs(220);
+
+  try {
+    await fadeVolume({
+      accessToken,
+      fromVolumePercent: dippedVolume,
+      toVolumePercent: baseVolume,
+      durationMs: fadeHalfMs,
+      deviceId: pendingTarget.deviceId
+    });
+  } catch (error) {
+    logStatus(`Fade-up skipped: ${error.message}`);
+  }
+}
+
+async function attemptSeekAndVerify(
+  pendingTarget,
+  accessToken,
+  detectionPlaybackState = null
+) {
+  if (pendingTarget.seekDelayMs > 0) {
+    logStatus(
+      `Track is current. Waiting ${Math.round(
+        pendingTarget.seekDelayMs / 1000
+      )}s before seek.`
+    );
+    await waitMs(pendingTarget.seekDelayMs);
+  }
+
+  logStatus(
+    `Attempting seek to ${formatMs(pendingTarget.desiredOffsetMs)}.`
+  );
+
+  if (pendingTarget.smoothTransitionEnabled) {
+    await runSmoothDjSeekTransition(
+      pendingTarget,
+      accessToken,
+      detectionPlaybackState
+    );
+  } else {
+    await apiRequest("/auth/spotify/player/seek", "PUT", accessToken, {
+      positionMs: pendingTarget.desiredOffsetMs,
+      deviceId: pendingTarget.deviceId ?? undefined
+    });
+  }
+
+  await waitMs(1200);
 
   const playbackState = await apiRequest(
     "/auth/spotify/player/current",
@@ -952,7 +1201,7 @@ function startPollingForQueuedTrack(pendingTarget, accessToken) {
         }
 
         if (currentUri === pendingTarget.trackUri) {
-          await attemptSeekAndVerify(pendingTarget, accessToken);
+          await attemptSeekAndVerify(pendingTarget, accessToken, playbackState);
         }
       }
 
@@ -1020,6 +1269,8 @@ async function handleQueueAction({
 
     let desiredOffsetMs = 0;
     let seekDelayMs = 0;
+    let smoothTransitionEnabled = false;
+    let smoothFadeDurationMs = 1200;
 
     if (shouldAutoSeek) {
       const offsetSeconds = parseNonNegativeNumber(
@@ -1032,9 +1283,18 @@ async function handleQueueAction({
         "Seek delay",
         0
       );
+      const smoothFadeSeconds = parseNonNegativeNumber(
+        elements.smoothFadeSeconds.value,
+        "Fade duration",
+        1.2
+      );
 
       desiredOffsetMs = Math.round(offsetSeconds * 1000);
       seekDelayMs = Math.round(seekDelaySeconds * 1000);
+      smoothTransitionEnabled = elements.smoothTransitionEnabled.checked;
+      smoothFadeDurationMs = Math.round(
+        Math.max(200, Math.min(6000, smoothFadeSeconds * 1000))
+      );
     }
 
     await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
@@ -1059,6 +1319,8 @@ async function handleQueueAction({
       desiredOffsetMs,
       seekDelayMs,
       deviceId: deviceId || null,
+      smoothTransitionEnabled,
+      smoothFadeDurationMs,
       mustSeeDifferentTrackFirst: false,
       seenDifferentTrackYet: false,
       createdAtMs: Date.now()
@@ -1268,6 +1530,22 @@ async function handlePlayNowClick(trackUriOverride = null) {
 async function handleManualRefreshTokenClick() {
   elements.refreshTokenButton.disabled = true;
   try {
+    const rawRefreshInput = elements.refreshToken.value;
+    const normalizedRefreshToken = extractTokenFromLooseInput(
+      rawRefreshInput,
+      "refresh_token"
+    );
+    if (normalizedRefreshToken && elements.refreshToken.value.trim() !== normalizedRefreshToken) {
+      elements.refreshToken.value = normalizedRefreshToken;
+      const maybeAccessFromSamePaste = extractTokenFromLooseInput(
+        rawRefreshInput,
+        "access_token"
+      );
+      if (maybeAccessFromSamePaste && !elements.accessToken.value.trim()) {
+        elements.accessToken.value = maybeAccessFromSamePaste;
+      }
+      saveInputsToLocalStorage();
+    }
     await refreshAccessTokenIfPossible({ silent: true });
     logStatus("Access token refreshed.");
   } catch (error) {
@@ -1285,6 +1563,17 @@ async function handleRefreshNowPlayingClick() {
   } finally {
     updateProviderUi();
   }
+}
+
+function handleConnectSpotifyClick() {
+  const provider = getSelectedProvider();
+  if (!isProviderSupported(provider)) {
+    const providerName = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+    logStatus(`${providerName} connect is coming soon. Switch to Spotify for now.`);
+    return;
+  }
+
+  window.location.assign("/auth/spotify/login");
 }
 
 async function handleGenerateRecommendationClick() {
@@ -1402,6 +1691,7 @@ function bindEvents() {
     handleQuickPauseResumeClick
   );
   elements.quickNextButton.addEventListener("click", handleQuickNextClick);
+  elements.connectSpotifyButton.addEventListener("click", handleConnectSpotifyClick);
   elements.quickPlayNowButton.addEventListener("click", handlePlayNowClick);
   elements.queueFromUriButton.addEventListener("click", handleQueueFromUriClick);
   elements.quickQueueOnlyButton.addEventListener("click", handleQueueOnlyClick);
@@ -1446,8 +1736,13 @@ function bindEvents() {
   });
   elements.offsetSeconds.addEventListener("change", saveInputsToLocalStorage);
   elements.seekDelaySeconds.addEventListener("change", saveInputsToLocalStorage);
+  elements.smoothFadeSeconds.addEventListener("change", saveInputsToLocalStorage);
   elements.deviceId.addEventListener("change", saveInputsToLocalStorage);
   elements.autoSeekEnabled.addEventListener("change", () => {
+    updateAutoSeekUi();
+    saveInputsToLocalStorage();
+  });
+  elements.smoothTransitionEnabled.addEventListener("change", () => {
     updateAutoSeekUi();
     saveInputsToLocalStorage();
   });

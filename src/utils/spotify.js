@@ -185,6 +185,26 @@ export async function seekCurrentPlayback(accessToken, positionMs, deviceId) {
   return { positionMs };
 }
 
+export async function setPlaybackVolume(accessToken, volumePercent, deviceId) {
+  const safeVolumePercent = Math.max(
+    0,
+    Math.min(100, Math.round(Number(volumePercent) || 0))
+  );
+
+  await spotifyApiRequest({
+    method: "PUT",
+    path: "/me/player/volume",
+    accessToken,
+    queryParams: {
+      volume_percent: safeVolumePercent,
+      device_id: deviceId
+    },
+    allowNoContent: true
+  });
+
+  return { volumePercent: safeVolumePercent };
+}
+
 export async function playTrackNow(
   accessToken,
   trackUri,
@@ -368,4 +388,38 @@ export async function getPlaybackQueue(accessToken) {
   return queueItems
     .map((item) => (item?.type === "track" ? mapSpotifyTrack(item) : null))
     .filter(Boolean);
+}
+
+export async function getAudioFeaturesByTrackIds(accessToken, trackIds = []) {
+  const ids = [...new Set(trackIds.filter(Boolean))].slice(0, 100);
+  if (ids.length === 0) {
+    return {};
+  }
+
+  const payload = await spotifyApiRequest({
+    method: "GET",
+    path: "/audio-features",
+    accessToken,
+    queryParams: {
+      ids: ids.join(",")
+    }
+  });
+
+  const features = payload?.audio_features ?? [];
+  const byTrackId = {};
+
+  for (const item of features) {
+    if (!item?.id) {
+      continue;
+    }
+
+    byTrackId[item.id] = {
+      tempo: Number.isFinite(item.tempo) ? item.tempo : null,
+      energy: Number.isFinite(item.energy) ? item.energy : null,
+      danceability: Number.isFinite(item.danceability) ? item.danceability : null,
+      valence: Number.isFinite(item.valence) ? item.valence : null
+    };
+  }
+
+  return byTrackId;
 }
