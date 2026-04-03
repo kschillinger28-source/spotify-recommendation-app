@@ -6,10 +6,14 @@ import {
   exchangeCodeForTokens,
   fetchCurrentUserProfile,
   getCurrentPlayback,
+  pausePlayback,
   playTrackNow,
+  resumePlayback,
   searchSpotifyTracks,
   seekCurrentPlayback,
-  refreshAccessToken
+  refreshAccessToken,
+  skipToNext,
+  skipToPrevious
 } from "../utils/spotify.js";
 import { buildNextSongRecommendation } from "../services/recommendationEngine.js";
 
@@ -360,6 +364,98 @@ router.put("/spotify/player/play-now", async (req, res) => {
   } catch (error) {
     return res.status(502).json({
       error: "Could not start Spotify playback.",
+      details: error.message
+    });
+  }
+});
+
+router.put("/spotify/player/pause", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const deviceId = req.body?.deviceId;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+
+  try {
+    await pausePlayback(token, deviceId);
+    return res.status(200).json({
+      message: "Playback paused."
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not pause Spotify playback.",
+      details: error.message
+    });
+  }
+});
+
+router.put("/spotify/player/resume", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const deviceId = req.body?.deviceId;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+
+  try {
+    await resumePlayback(token, deviceId);
+    return res.status(200).json({
+      message: "Playback resumed."
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not resume Spotify playback.",
+      details: error.message
+    });
+  }
+});
+
+router.post("/spotify/player/next", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const deviceId = req.body?.deviceId;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+
+  try {
+    await skipToNext(token, deviceId);
+    return res.status(200).json({
+      message: "Skipped to next track."
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not skip to next Spotify track.",
+      details: error.message
+    });
+  }
+});
+
+router.post("/spotify/player/previous", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const deviceId = req.body?.deviceId;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+
+  try {
+    await skipToPrevious(token, deviceId);
+    return res.status(200).json({
+      message: "Went back to previous track."
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not go to previous Spotify track.",
       details: error.message
     });
   }

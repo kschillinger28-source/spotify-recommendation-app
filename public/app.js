@@ -25,6 +25,9 @@ const elements = {
   autoSeekEnabled: document.getElementById("autoSeekEnabled"),
   seekDelaySeconds: document.getElementById("seekDelaySeconds"),
   deviceId: document.getElementById("deviceId"),
+  quickPreviousButton: document.getElementById("quickPreviousButton"),
+  quickPauseResumeButton: document.getElementById("quickPauseResumeButton"),
+  quickNextButton: document.getElementById("quickNextButton"),
   quickPlayNowButton: document.getElementById("quickPlayNowButton"),
   quickQueueOnlyButton: document.getElementById("quickQueueOnlyButton"),
   quickQueueAndSeekButton: document.getElementById("quickQueueAndSeekButton"),
@@ -62,8 +65,10 @@ let searchDebounceTimerId = null;
 let pendingSearchAfterInFlight = false;
 let refreshInFlightPromise = null;
 let nowPlayingIntervalId = null;
+let nowPlayingInFlight = false;
 let recommendationInFlight = false;
 let latestRecommendationPlan = null;
+const NOW_PLAYING_POLL_INTERVAL_MS = 1000;
 
 const PROVIDER_DISPLAY_NAMES = {
   spotify: "Spotify",
@@ -135,9 +140,16 @@ function setTrackInput(trackUri) {
 
 function setActionButtonsDisabled(disabled) {
   elements.queueFromUriButton.disabled = disabled;
+  elements.quickPreviousButton.disabled = disabled;
+  elements.quickPauseResumeButton.disabled = disabled;
+  elements.quickNextButton.disabled = disabled;
   elements.quickPlayNowButton.disabled = disabled;
   elements.quickQueueOnlyButton.disabled = disabled;
   elements.quickQueueAndSeekButton.disabled = disabled;
+}
+
+function setPauseResumeButtonLabel(isPlaying) {
+  elements.quickPauseResumeButton.textContent = isPlaying ? "Pause" : "Resume";
 }
 
 function logStatus(message) {
@@ -284,6 +296,7 @@ function renderNowPlayingEmpty(message = "No active playback") {
   elements.nowPlayingProgressBar.style.width = "0%";
   elements.nowPlayingProgressText.textContent = "0:00 / 0:00";
   elements.nowPlayingRemainingText.textContent = "remaining 0:00";
+  setPauseResumeButtonLabel(false);
 }
 
 function renderNowPlaying(playbackPayload) {
@@ -320,18 +333,27 @@ function renderNowPlaying(playbackPayload) {
   elements.nowPlayingRemainingText.textContent = isPlaying
     ? `remaining ${formatMs(remainingMs)}`
     : `paused at ${formatMs(progressMs)}`;
+  setPauseResumeButtonLabel(isPlaying);
 }
 
 async function refreshNowPlaying({ silent = false } = {}) {
+  if (nowPlayingInFlight) {
+    return;
+  }
+
+  nowPlayingInFlight = true;
+
   const provider = getSelectedProvider();
   if (!isProviderSupported(provider)) {
     renderNowPlayingEmpty("Now playing is available for Spotify only.");
+    nowPlayingInFlight = false;
     return;
   }
 
   const accessToken = elements.accessToken.value.trim();
   if (!accessToken) {
     renderNowPlayingEmpty("Add access token to load now playing.");
+    nowPlayingInFlight = false;
     return;
   }
 
@@ -347,6 +369,8 @@ async function refreshNowPlaying({ silent = false } = {}) {
       logStatus(`Could not refresh now playing: ${error.message}`);
     }
     renderNowPlayingEmpty("Could not load now playing.");
+  } finally {
+    nowPlayingInFlight = false;
   }
 }
 
@@ -361,7 +385,7 @@ function startNowPlayingPolling() {
   stopNowPlayingPolling();
   nowPlayingIntervalId = window.setInterval(() => {
     refreshNowPlaying({ silent: true });
-  }, 5000);
+  }, NOW_PLAYING_POLL_INTERVAL_MS);
 }
 
 function updateRecommendationButtons() {
@@ -1087,6 +1111,92 @@ async function handleQueueAndSeekClick() {
   await handleQueueAction({ forceQueueOnly: false });
 }
 
+function getQuickTransportContext() {
+  const provider = getSelectedProvider();
+  if (!isProviderSupported(provider)) {
+    const providerName = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+    throw new Error(
+      `${providerName} support is coming soon. Switch provider to Spotify for now.`
+    );
+  }
+
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) {
+    throw new Error("Please provide an access token.");
+  }
+
+  const deviceId = elements.deviceId.value.trim();
+  return {
+    accessToken,
+    deviceId
+  };
+}
+
+async function handleQuickPauseResumeClick() {
+  setActionButtonsDisabled(true);
+  try {
+    const { accessToken, deviceId } = getQuickTransportContext();
+    const playbackState = await apiRequest(
+      "/auth/spotify/player/current",
+      "GET",
+      accessToken
+    );
+    const isPlaying = Boolean(
+      playbackState?.hasActivePlayback && playbackState?.playback?.is_playing
+    );
+
+    await apiRequest(
+      isPlaying ? "/auth/spotify/player/pause" : "/auth/spotify/player/resume",
+      "PUT",
+      accessToken,
+      {
+        deviceId: deviceId || undefined
+      }
+    );
+    logStatus(isPlaying ? "Paused playback." : "Resumed playback.");
+    await refreshNowPlaying({ silent: true });
+  } catch (error) {
+    logStatus(`Could not toggle pause/resume: ${error.message}`);
+  } finally {
+    setActionButtonsDisabled(false);
+    updateProviderUi();
+  }
+}
+
+async function handleQuickNextClick() {
+  setActionButtonsDisabled(true);
+  try {
+    const { accessToken, deviceId } = getQuickTransportContext();
+    await apiRequest("/auth/spotify/player/next", "POST", accessToken, {
+      deviceId: deviceId || undefined
+    });
+    logStatus("Skipped to next track.");
+    await refreshNowPlaying({ silent: true });
+  } catch (error) {
+    logStatus(`Could not skip to next track: ${error.message}`);
+  } finally {
+    setActionButtonsDisabled(false);
+    updateProviderUi();
+  }
+}
+
+async function handleQuickPreviousClick() {
+  setActionButtonsDisabled(true);
+  try {
+    const { accessToken, deviceId } = getQuickTransportContext();
+    await apiRequest("/auth/spotify/player/previous", "POST", accessToken, {
+      deviceId: deviceId || undefined
+    });
+    logStatus("Went to previous track.");
+    await refreshNowPlaying({ silent: true });
+  } catch (error) {
+    logStatus(`Could not go to previous track: ${error.message}`);
+  } finally {
+    setActionButtonsDisabled(false);
+    updateProviderUi();
+  }
+}
+
 async function handlePlayNowClick(trackUriOverride = null) {
   hideFallback();
   saveInputsToLocalStorage();
@@ -1286,6 +1396,12 @@ function bindEvents() {
     updateProviderUi();
     saveInputsToLocalStorage();
   });
+  elements.quickPreviousButton.addEventListener("click", handleQuickPreviousClick);
+  elements.quickPauseResumeButton.addEventListener(
+    "click",
+    handleQuickPauseResumeClick
+  );
+  elements.quickNextButton.addEventListener("click", handleQuickNextClick);
   elements.quickPlayNowButton.addEventListener("click", handlePlayNowClick);
   elements.queueFromUriButton.addEventListener("click", handleQueueFromUriClick);
   elements.quickQueueOnlyButton.addEventListener("click", handleQueueOnlyClick);

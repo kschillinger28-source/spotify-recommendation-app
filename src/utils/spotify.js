@@ -208,6 +208,62 @@ export async function playTrackNow(
   return { trackUri, positionMs: Math.max(0, Math.round(Number(positionMs) || 0)) };
 }
 
+export async function pausePlayback(accessToken, deviceId) {
+  await spotifyApiRequest({
+    method: "PUT",
+    path: "/me/player/pause",
+    accessToken,
+    queryParams: {
+      device_id: deviceId
+    },
+    allowNoContent: true
+  });
+
+  return { paused: true };
+}
+
+export async function resumePlayback(accessToken, deviceId) {
+  await spotifyApiRequest({
+    method: "PUT",
+    path: "/me/player/play",
+    accessToken,
+    queryParams: {
+      device_id: deviceId
+    },
+    allowNoContent: true
+  });
+
+  return { playing: true };
+}
+
+export async function skipToNext(accessToken, deviceId) {
+  await spotifyApiRequest({
+    method: "POST",
+    path: "/me/player/next",
+    accessToken,
+    queryParams: {
+      device_id: deviceId
+    },
+    allowNoContent: true
+  });
+
+  return { skipped: "next" };
+}
+
+export async function skipToPrevious(accessToken, deviceId) {
+  await spotifyApiRequest({
+    method: "POST",
+    path: "/me/player/previous",
+    accessToken,
+    queryParams: {
+      device_id: deviceId
+    },
+    allowNoContent: true
+  });
+
+  return { skipped: "previous" };
+}
+
 export async function searchSpotifyTracks(accessToken, query, limit = 10) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 25));
 
