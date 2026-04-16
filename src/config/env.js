@@ -26,5 +26,5 @@ export const env = {
   spotifyRedirectUri: process.env.SPOTIFY_REDIRECT_URI,
   spotifyScopes:
     process.env.SPOTIFY_SCOPES ??
-    "user-read-email user-read-private user-top-read user-read-playback-state user-read-currently-playing user-modify-playback-state"
+    "user-read-email user-read-private user-top-read user-library-read user-read-recently-played playlist-read-private playlist-read-collaborative user-read-playback-state user-read-currently-playing user-modify-playback-state"
 };

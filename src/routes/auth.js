@@ -6,7 +6,10 @@ import {
   buildSpotifyAuthorizeUrl,
   exchangeCodeForTokens,
   fetchCurrentUserProfile,
+  getArtistsByIds,
+  getAudioFeaturesByTrackIds,
   getCurrentPlayback,
+  getTrackAudioAnalysis,
   pausePlayback,
   playTrackNow,
   resumePlayback,
@@ -17,12 +20,22 @@ import {
   skipToNext,
   skipToPrevious
 } from "../utils/spotify.js";
-import { buildNextSongRecommendation } from "../services/recommendationEngine.js";
+import SessionStateStore from "../services/vibe/SessionStateStore.js";
+import VibeEngine from "../services/vibe/VibeEngine.js";
 
 const router = Router();
 const SPOTIFY_STATE_COOKIE = "spotify_oauth_state";
 const OAUTH_STATE_TTL_MS = 1000 * 60 * 10;
+const OAUTH_COOKIE_SECURE = String(env.appBaseUrl ?? "")
+  .toLowerCase()
+  .startsWith("https://");
+const LYRICS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const lyricsCache = new Map();
+const AUDIO_ANALYSIS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const audioAnalysisCache = new Map();
 const issuedOauthStates = new Map();
+const sessionStore = new SessionStateStore();
+const vibeEngine = new VibeEngine(sessionStore);
 
 function pruneExpiredOauthStates(nowMs = Date.now()) {
   for (const [state, expiresAtMs] of issuedOauthStates.entries()) {
@@ -88,6 +101,68 @@ function getBearerTokenFromRequest(req) {
   }
 
   return authHeader.slice("Bearer ".length);
+}
+
+function getSessionIdFromRequest(req) {
+  const directValue =
+    req.headers["x-dj-session-id"] ??
+    req.query.sessionId ??
+    req.body?.sessionId;
+  const sessionId = String(directValue ?? "").trim();
+  if (!sessionId) {
+    return null;
+  }
+  return sessionId;
+}
+
+function getUserContextFromRequest(req) {
+  const raw = req.body?.userContext ?? req.query?.userContext;
+  if (!raw) {
+    return {};
+  }
+
+  if (typeof raw === "object") {
+    return raw;
+  }
+
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return {};
+  }
+}
+
+async function handleRecommendationRequest(req, res, { forDj = false } = {}) {
+  const token = getBearerTokenFromRequest(req);
+  const sessionId = getSessionIdFromRequest(req);
+  const userContext = getUserContextFromRequest(req);
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id or query)."
+    });
+  }
+
+  try {
+    const recommendation = await vibeEngine.buildNextSongRecommendation(
+      token,
+      sessionId,
+      userContext
+    );
+    return res.status(200).json(recommendation);
+  } catch (error) {
+    return res.status(502).json({
+      error: forDj
+        ? "Could not build DJ recommendation plan."
+        : "Could not build next-song recommendation plan.",
+      details: error.message
+    });
+  }
 }
 
 function sanitizeLooseTokenString(rawValue) {
@@ -203,6 +278,192 @@ function buildOAuthCallbackRedirectUrl({ tokens, error }) {
   return redirectUrl.toString();
 }
 
+function buildLyricsCacheKey(artist, title) {
+  return `${String(artist ?? "").trim().toLowerCase()}::${String(title ?? "")
+    .trim()
+    .toLowerCase()}`;
+}
+
+function getCachedLyrics(artist, title) {
+  const key = buildLyricsCacheKey(artist, title);
+  const cached = lyricsCache.get(key);
+  if (!cached) {
+    return null;
+  }
+  if (Date.now() - Number(cached.cachedAtMs ?? 0) > LYRICS_CACHE_TTL_MS) {
+    lyricsCache.delete(key);
+    return null;
+  }
+  return cached;
+}
+
+function setCachedLyrics(artist, title, value) {
+  const key = buildLyricsCacheKey(artist, title);
+  lyricsCache.set(key, {
+    cachedAtMs: Date.now(),
+    ...value
+  });
+  if (lyricsCache.size > 300) {
+    const sorted = [...lyricsCache.entries()].sort(
+      (a, b) => Number(a[1]?.cachedAtMs ?? 0) - Number(b[1]?.cachedAtMs ?? 0)
+    );
+    const overflow = lyricsCache.size - 220;
+    for (const [staleKey] of sorted.slice(0, overflow)) {
+      lyricsCache.delete(staleKey);
+    }
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getCachedAudioAnalysis(trackId) {
+  const key = String(trackId ?? "").trim();
+  if (!key) {
+    return null;
+  }
+  const cached = audioAnalysisCache.get(key);
+  if (!cached) {
+    return null;
+  }
+  if (Date.now() - Number(cached.cachedAtMs ?? 0) > AUDIO_ANALYSIS_CACHE_TTL_MS) {
+    audioAnalysisCache.delete(key);
+    return null;
+  }
+  return cached.payload ?? null;
+}
+
+function setCachedAudioAnalysis(trackId, payload) {
+  const key = String(trackId ?? "").trim();
+  if (!key) {
+    return;
+  }
+  audioAnalysisCache.set(key, {
+    cachedAtMs: Date.now(),
+    payload
+  });
+  if (audioAnalysisCache.size > 220) {
+    const sorted = [...audioAnalysisCache.entries()].sort(
+      (a, b) => Number(a[1]?.cachedAtMs ?? 0) - Number(b[1]?.cachedAtMs ?? 0)
+    );
+    const overflow = audioAnalysisCache.size - 180;
+    for (const [staleKey] of sorted.slice(0, overflow)) {
+      audioAnalysisCache.delete(staleKey);
+    }
+  }
+}
+
+function simplifyAudioAnalysisSegments(analysisPayload, barCount = 30) {
+  const segments = Array.isArray(analysisPayload?.segments)
+    ? analysisPayload.segments
+    : [];
+  return segments.slice(0, 4500).map((segment) => {
+    const pitches = Array.isArray(segment?.pitches)
+      ? segment.pitches
+          .slice(0, 12)
+          .map((value) => clamp(Number(value) || 0, 0, 1))
+      : [];
+    const timbre = Array.isArray(segment?.timbre)
+      ? segment.timbre
+          .slice(0, 12)
+          .map((value) => clamp(Math.abs(Number(value) || 0) / 220, 0, 1))
+      : [];
+    return {
+      startMs: Math.max(0, Math.round((Number(segment?.start) || 0) * 1000)),
+      durationMs: Math.max(40, Math.round((Number(segment?.duration) || 0) * 1000)),
+      confidence: clamp(Number(segment?.confidence) || 0, 0, 1),
+      loudnessMax: Number(segment?.loudness_max ?? -60),
+      pitches,
+      timbre,
+      barCount
+    };
+  });
+}
+
+async function fetchLyricsFromProvider(artist, title) {
+  const url = new URL(
+    `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`
+  );
+  const response = await fetch(url.toString(), {
+    method: "GET"
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const payload = await response.json().catch(() => null);
+  const lyrics = String(payload?.lyrics ?? "").trim();
+  if (!lyrics) {
+    return null;
+  }
+  return lyrics;
+}
+
+function parseSyncedLrcLines(syncedLyricsText) {
+  const text = String(syncedLyricsText ?? "").trim();
+  if (!text) {
+    return [];
+  }
+
+  const lines = [];
+  const rows = text.split(/\r?\n/);
+  for (const row of rows) {
+    const stamps = [...row.matchAll(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g)];
+    if (stamps.length === 0) {
+      continue;
+    }
+    const textPart = row.replace(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g, "").trim();
+    if (!textPart) {
+      continue;
+    }
+
+    for (const stamp of stamps) {
+      const minutes = Number(stamp[1] ?? 0);
+      const seconds = Number(stamp[2] ?? 0);
+      const hundredthsRaw = String(stamp[3] ?? "0");
+      const milliseconds = Math.round(Number(`0.${hundredthsRaw}`) * 1000);
+      const startMs =
+        Math.max(0, minutes) * 60000 + Math.max(0, seconds) * 1000 + Math.max(0, milliseconds);
+      lines.push({
+        startMs,
+        text: textPart
+      });
+    }
+  }
+
+  return lines.sort((a, b) => a.startMs - b.startMs);
+}
+
+async function fetchSyncedLyricsFromLrcLib(artist, title) {
+  const searchUrl = new URL("https://lrclib.net/api/search");
+  searchUrl.searchParams.set("artist_name", String(artist ?? ""));
+  searchUrl.searchParams.set("track_name", String(title ?? ""));
+
+  const response = await fetch(searchUrl.toString(), {
+    method: "GET"
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const results = await response.json().catch(() => null);
+  const items = Array.isArray(results) ? results : [];
+  if (items.length === 0) {
+    return null;
+  }
+
+  const best = items.find((item) => String(item?.syncedLyrics ?? "").trim()) ?? items[0];
+  const syncedLines = parseSyncedLrcLines(best?.syncedLyrics);
+  const plainLyrics = String(best?.plainLyrics ?? "").trim();
+  const fallbackSyncedRaw = String(best?.syncedLyrics ?? "").trim();
+  const fallbackLyrics = plainLyrics || fallbackSyncedRaw.replace(/\[[^\]]+\]/g, " ").trim();
+
+  return {
+    lyrics: fallbackLyrics,
+    timedLines: syncedLines
+  };
+}
+
 router.get("/spotify/login", (req, res) => {
   pruneExpiredOauthStates();
   const state = crypto.randomBytes(24).toString("hex");
@@ -212,7 +473,7 @@ router.get("/spotify/login", (req, res) => {
   res.cookie(SPOTIFY_STATE_COOKIE, state, {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure: OAUTH_COOKIE_SECURE,
     maxAge: 1000 * 60 * 10
   });
 
@@ -259,7 +520,11 @@ router.get("/spotify/callback", async (req, res) => {
 
   try {
     const tokens = await exchangeCodeForTokens(String(code));
-    res.clearCookie(SPOTIFY_STATE_COOKIE);
+    res.clearCookie(SPOTIFY_STATE_COOKIE, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: OAUTH_COOKIE_SECURE
+    });
     issuedOauthStates.delete(state);
 
     if (!wantsJsonCallbackResponse(req)) {
@@ -329,6 +594,92 @@ router.get("/spotify/profile", async (req, res) => {
     return res.status(502).json({
       error: "Could not fetch Spotify profile.",
       details: error.message
+    });
+  }
+});
+
+router.get("/spotify/lyrics", async (req, res) => {
+  const artist = String(req.query.artist ?? "").trim();
+  const title = String(req.query.title ?? "").trim();
+  if (!artist || !title) {
+    return res.status(400).json({
+      error: "Missing query params artist and title."
+    });
+  }
+
+  const cached = getCachedLyrics(artist, title);
+  if (cached) {
+    return res.status(200).json({
+      artist,
+      title,
+      found: Boolean(cached.lyrics),
+      lyrics: cached.lyrics ?? "",
+      timedLines: Array.isArray(cached.timedLines) ? cached.timedLines : [],
+      source: "cache"
+    });
+  }
+
+  try {
+    const syncedPayload = await fetchSyncedLyricsFromLrcLib(artist, title);
+    if (syncedPayload?.lyrics) {
+      setCachedLyrics(artist, title, {
+        lyrics: syncedPayload.lyrics,
+        timedLines: syncedPayload.timedLines ?? [],
+        source: "lrclib"
+      });
+      return res.status(200).json({
+        artist,
+        title,
+        found: true,
+        lyrics: syncedPayload.lyrics,
+        timedLines: syncedPayload.timedLines ?? [],
+        source: "lrclib"
+      });
+    }
+
+    const lyrics = await fetchLyricsFromProvider(artist, title);
+    if (!lyrics) {
+      setCachedLyrics(artist, title, {
+        lyrics: "",
+        timedLines: [],
+        source: "unavailable"
+      });
+      return res.status(200).json({
+        artist,
+        title,
+        found: false,
+        lyrics: "",
+        timedLines: [],
+        source: "unavailable"
+      });
+    }
+
+    setCachedLyrics(artist, title, {
+      lyrics,
+      timedLines: [],
+      source: "lyrics.ovh"
+    });
+    return res.status(200).json({
+      artist,
+      title,
+      found: true,
+      lyrics,
+      timedLines: [],
+      source: "lyrics.ovh"
+    });
+  } catch {
+    setCachedLyrics(artist, title, {
+      lyrics: "",
+      timedLines: [],
+      source: "unavailable"
+    });
+    return res.status(200).json({
+      artist,
+      title,
+      found: false,
+      lyrics: "",
+      timedLines: [],
+      source: "unavailable"
     });
   }
 });
@@ -428,6 +779,50 @@ router.get("/spotify/player/current", async (req, res) => {
   } catch (error) {
     return res.status(502).json({
       error: "Could not fetch current Spotify playback state.",
+      details: error.message
+    });
+  }
+});
+
+router.get("/spotify/player/audio-spectrum/:trackId", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const trackId = String(req.params.trackId ?? "").trim();
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+  if (!/^[A-Za-z0-9]{22}$/.test(trackId)) {
+    return res.status(400).json({
+      error: "trackId must be a valid 22-char Spotify track ID."
+    });
+  }
+
+  try {
+    const cached = getCachedAudioAnalysis(trackId);
+    if (cached) {
+      return res.status(200).json({
+        trackId,
+        barCount: 30,
+        source: "cache",
+        segments: cached
+      });
+    }
+
+    const analysisPayload = await getTrackAudioAnalysis(token, trackId);
+    const simplifiedSegments = simplifyAudioAnalysisSegments(analysisPayload, 30);
+    setCachedAudioAnalysis(trackId, simplifiedSegments);
+
+    return res.status(200).json({
+      trackId,
+      barCount: 30,
+      source: "spotify_audio_analysis",
+      segments: simplifiedSegments
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not fetch Spotify audio analysis.",
       details: error.message
     });
   }
@@ -637,24 +1032,142 @@ router.post("/spotify/player/previous", async (req, res) => {
   }
 });
 
-router.get("/spotify/recommend/next", async (req, res) => {
-  const token = getBearerTokenFromRequest(req);
+router.post("/spotify/dj/session/start", (req, res) => {
+  const sessionId = getSessionIdFromRequest(req);
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id, query, or body)."
+    });
+  }
 
+  const remixModeEnabled = Boolean(req.body?.remixModeEnabled);
+  const snapshot = sessionStore.setRemixMode(sessionId, remixModeEnabled);
+  return res.status(200).json({
+    message: "DJ session started.",
+    session: snapshot
+  });
+});
+
+router.get("/spotify/dj/session", (req, res) => {
+  const sessionId = getSessionIdFromRequest(req);
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id or query)."
+    });
+  }
+
+  const snapshot = sessionStore.snapshot(sessionId);
+  return res.status(200).json({
+    session: snapshot
+  });
+});
+
+router.post("/spotify/dj/session/remix-mode", (req, res) => {
+  const sessionId = getSessionIdFromRequest(req);
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id, query, or body)."
+    });
+  }
+
+  const remixModeEnabled = Boolean(req.body?.remixModeEnabled);
+  const snapshot = sessionStore.setRemixMode(sessionId, remixModeEnabled);
+  return res.status(200).json({
+    message: "Remix mode updated.",
+    session: snapshot
+  });
+});
+
+router.post("/spotify/dj/session/affinity/search", (req, res) => {
+  const sessionId = getSessionIdFromRequest(req);
+  const query = String(req.body?.query ?? "").trim();
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id, query, or body)."
+    });
+  }
+  if (!query) {
+    return res.status(400).json({
+      error: "Missing query text."
+    });
+  }
+
+  const snapshot = sessionStore.recordSearchAffinity(sessionId, query);
+  return res.status(200).json({
+    message: "Search affinity recorded.",
+    session: snapshot
+  });
+});
+
+router.post("/spotify/dj/session/feedback/skip", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  const sessionId = getSessionIdFromRequest(req);
   if (!token) {
     return res.status(401).json({
       error: "Missing Bearer access token."
     });
   }
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id, query, or body)."
+    });
+  }
+
+  const trackId = String(req.body?.trackId ?? "").trim();
+  const progressMs = Number(req.body?.progressMs ?? 0);
+  const artistIds = Array.isArray(req.body?.artistIds)
+    ? req.body.artistIds.filter(Boolean)
+    : [];
+  let tempo = Number(req.body?.tempo);
+  let genreTags = Array.isArray(req.body?.genreTags)
+    ? req.body.genreTags.filter(Boolean)
+    : [];
 
   try {
-    const recommendation = await buildNextSongRecommendation(token);
-    return res.status(200).json(recommendation);
+    if (trackId && !Number.isFinite(tempo)) {
+      const featuresById = await getAudioFeaturesByTrackIds(token, [trackId]);
+      const maybeTempo = featuresById?.[trackId]?.tempo;
+      if (Number.isFinite(maybeTempo)) {
+        tempo = maybeTempo;
+      }
+    }
+
+    if (artistIds.length > 0 && genreTags.length === 0) {
+      const artistsById = await getArtistsByIds(token, artistIds);
+      genreTags = artistIds.flatMap((artistId) => artistsById?.[artistId]?.genres ?? []);
+    }
+
+    const snapshot = sessionStore.recordSkipFeedback(sessionId, {
+      trackId,
+      progressMs,
+      artistIds,
+      genreTags,
+      tempo
+    });
+    return res.status(200).json({
+      message: "Skip feedback recorded.",
+      session: snapshot
+    });
   } catch (error) {
     return res.status(502).json({
-      error: "Could not build next-song recommendation plan.",
+      error: "Could not record skip feedback.",
       details: error.message
     });
   }
 });
+
+router.get("/spotify/recommend/next", (req, res) =>
+  handleRecommendationRequest(req, res, { forDj: false })
+);
+router.post("/spotify/recommend/next", (req, res) =>
+  handleRecommendationRequest(req, res, { forDj: false })
+);
+
+router.get("/spotify/dj/recommend/next", (req, res) =>
+  handleRecommendationRequest(req, res, { forDj: true })
+);
+router.post("/spotify/dj/recommend/next", (req, res) =>
+  handleRecommendationRequest(req, res, { forDj: true })
+);
 
 export default router;
