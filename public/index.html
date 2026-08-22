@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>The Vibe — AI DJ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -71,6 +77,62 @@
         margin: 0;
         color: #9db2e9;
         font-size: 15px;
+      }
+
+      .app-nav {
+        display: flex;
+        gap: 4px;
+        margin: 18px 0 0;
+        padding: 4px;
+        border: 1px solid var(--glass-border);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .app-nav-tab {
+        flex: 1;
+        padding: 10px 12px;
+        border: none;
+        border-radius: 9px;
+        background: transparent;
+        color: #92a5d6;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 13px;
+        letter-spacing: 0.03em;
+        cursor: pointer;
+        transition: background 0.18s ease, color 0.18s ease;
+      }
+
+      .app-nav-tab:hover {
+        color: #eaf1ff;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .app-nav-tab.is-active {
+        color: #f1f6ff;
+        background: linear-gradient(135deg, rgba(110, 150, 255, 0.32), rgba(110, 150, 255, 0.14));
+        box-shadow: 0 0 0 1px rgba(130, 160, 255, 0.35) inset;
+      }
+
+      .app-view {
+        display: none;
+      }
+
+      .app-view.is-active {
+        display: block;
+        animation: appViewFadeIn 0.28s ease;
+      }
+
+      @keyframes appViewFadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
 
       .card {
@@ -204,6 +266,95 @@
       .playback-control-bar.secondary button {
         font-size: 13px;
         padding: 10px 14px;
+      }
+
+      .icon-button {
+        flex: 0 0 64px;
+        min-width: 64px;
+        max-width: 64px;
+        font-size: 22px;
+        line-height: 1;
+        padding: 12px 0;
+      }
+
+      .provider-connect-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-top: 10px;
+      }
+
+      .provider-connect-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        text-align: left;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+      }
+
+      .provider-connect-card:hover:not(:disabled) {
+        transform: translateY(-1px);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .provider-connect-card--spotify:hover:not(:disabled) {
+        border-color: #1db954;
+        box-shadow: 0 6px 20px rgba(29, 185, 84, 0.2);
+      }
+
+      .provider-connect-card--soundcloud:hover:not(:disabled) {
+        border-color: #ff5500;
+        box-shadow: 0 6px 20px rgba(255, 85, 0, 0.2);
+      }
+
+      .provider-connect-card--apple:hover:not(:disabled) {
+        border-color: #fa243c;
+        box-shadow: 0 6px 20px rgba(250, 36, 60, 0.2);
+      }
+
+      .provider-connect-card--youtube-music:hover:not(:disabled) {
+        border-color: #ff0000;
+        box-shadow: 0 6px 20px rgba(255, 0, 0, 0.2);
+      }
+
+      .provider-connect-card--tidal:hover:not(:disabled) {
+        border-color: #ffffff;
+        box-shadow: 0 6px 20px rgba(255, 255, 255, 0.15);
+      }
+
+      .provider-connect-icon {
+        flex: 0 0 auto;
+        display: flex;
+        width: 40px;
+        height: 40px;
+      }
+
+      .provider-connect-icon svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .provider-connect-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .provider-connect-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #ffffff;
+      }
+
+      .provider-connect-sub {
+        font-size: 12px;
+        font-weight: 400;
+        color: rgba(255, 255, 255, 0.6);
       }
 
       .np-progress-stack {
@@ -544,33 +695,95 @@
         display: none;
       }
 
-      .hero-lyrics-shell {
+      .hero-lyrics-overlay {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 2;
+        min-height: 30%;
+        border-radius: 0 0 14px 14px;
+        overflow: hidden;
+        container-type: inline-size;
+        container-name: lyricsbox;
+        pointer-events: none;
+      }
+
+      .hero-lyrics-stage {
         position: relative;
-        z-index: 1;
-        order: 2;
-        flex: 0 0 auto;
-        border-top: 1px solid rgba(255, 255, 255, 0.12);
-        padding: 10px 14px 6px;
-        min-width: 0;
+        display: flex;
+        align-items: center;
+        min-height: 100%;
+        padding: 14px 4px 10px;
+        transition: opacity 0.45s ease;
       }
 
-      .hero-lyrics-label {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #9db2e9;
+      .hero-lyrics-track {
+        width: 100%;
+        overflow: hidden;
       }
 
-      .hero-lyrics-line {
-        margin-top: 5px;
-        font-size: 16px;
+      .hero-lyrics-current {
+        margin: 0;
+        display: inline-block;
+        white-space: nowrap;
+        padding-left: 100%;
+        font-family: "Bebas Neue", "Space Grotesk", system-ui, sans-serif;
+        font-size: clamp(1.15rem, 7.4cqw, 2.1rem);
+        letter-spacing: 0.045em;
+        color: #ffffff;
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+        animation: heroLyricsMarquee 9s linear infinite;
+        will-change: transform;
+      }
+
+      .hero-lyrics-current.is-placeholder {
+        display: block;
+        padding-left: 0;
+        white-space: normal;
+        text-align: center;
+        width: 100%;
+        box-sizing: border-box;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: clamp(0.8rem, 3cqw, 1rem);
+        letter-spacing: normal;
+        font-weight: 550;
+        color: rgba(200, 213, 245, 0.88);
+        text-shadow: none;
+        animation: none;
+      }
+
+      @keyframes heroLyricsMarquee {
+        from {
+          transform: translateX(0);
+        }
+        to {
+          transform: translateX(calc(-100% - 100cqw));
+        }
+      }
+
+      .hero-lyrics-transition {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 14px 16px;
+        background: rgba(6, 10, 20, 0.88);
+        color: #b4ffd8;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 650;
         line-height: 1.4;
-        color: #e9f0ff;
-        min-height: 2.8em;
-        word-break: break-word;
-        overflow-wrap: anywhere;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.45s ease;
+      }
+
+      .hero-lyrics-transition.is-visible {
         opacity: 1;
-        transition: opacity 0.22s ease-in-out;
       }
 
       @keyframes heroPulse {
@@ -631,6 +844,16 @@
       .inline-status {
         margin-top: 8px;
         font-size: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        opacity: 1;
+        transition: opacity 0.7s ease;
+      }
+
+      .inline-status.fading {
+        opacity: 0;
       }
 
       .inline-status.info {
@@ -643,6 +866,27 @@
 
       .inline-status.error {
         color: #ffc8a8;
+      }
+
+      .inline-status-text {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .inline-status-dismiss {
+        flex: 0 0 auto;
+        background: transparent;
+        border: none;
+        padding: 0 2px;
+        font-size: 15px;
+        line-height: 1;
+        color: inherit;
+        opacity: 0.55;
+        cursor: pointer;
+      }
+
+      .inline-status-dismiss:hover {
+        opacity: 1;
       }
 
       #searchResults {
@@ -701,6 +945,14 @@
       .ctx-badge .ic {
         font-size: 14px;
         line-height: 1;
+      }
+
+      .ctx-badge.ctx-badge--clickable {
+        cursor: pointer;
+      }
+
+      .ctx-badge.ctx-badge--clickable:hover {
+        border-color: rgba(255, 255, 255, 0.22);
       }
 
       .dj-switch-row {
@@ -883,7 +1135,16 @@
 
       #fallbackCard {
         border-color: rgba(255, 189, 110, 0.45);
-        background: rgba(40, 24, 8, 0.4);
+        background: rgba(19, 14, 8, 0.92);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        position: fixed;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        width: min(560px, calc(100% - 32px));
+        z-index: 50;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
       }
 
       #fallbackCard.hidden {
@@ -953,6 +1214,13 @@
         <p>Your AI DJ for the next track — feel the transition, skip the setup.</p>
       </header>
 
+      <nav class="app-nav" role="tablist" aria-label="Sections">
+        <button type="button" class="app-nav-tab" data-view="player" role="tab" aria-selected="false">Player</button>
+        <button type="button" class="app-nav-tab" data-view="vibe" role="tab" aria-selected="false">Vibe</button>
+        <button type="button" class="app-nav-tab" data-view="settings" role="tab" aria-selected="false">Settings</button>
+      </nav>
+
+      <div class="app-view" id="view-player" data-view-panel="player">
       <section class="card search-hero">
         <div class="section-head">
           <h2>Find music</h2>
@@ -971,17 +1239,6 @@
           </div>
           <p id="searchInlineStatus" class="inline-status hidden"></p>
           <div id="searchResults"></div>
-        </div>
-      </section>
-
-      <section class="card">
-        <div class="connect-row">
-          <button id="connectSpotifyButton" type="button">Connect Spotify</button>
-          <span id="connectSpotifyHint" class="hint">One-time sign-in to link your account.</span>
-        </div>
-        <div id="platformBetaBanner" class="platform-beta-banner hidden" role="status">
-          <strong>BETA:</strong>
-          <span id="platformBetaLabel">This platform</span> integration is pending — switch to Spotify for full playback.
         </div>
       </section>
 
@@ -1004,6 +1261,19 @@
               <div id="nowPlayingHeroArtPlaceholder" class="hero-art-placeholder">
                 Waiting for the Vibe…
               </div>
+              <div class="hero-lyrics-overlay" id="nowPlayingLyricsViewport">
+                <div
+                  id="nowPlayingLyricsTransition"
+                  class="hero-lyrics-transition"
+                  aria-live="polite"
+                  hidden
+                ></div>
+                <div id="nowPlayingLyricsStage" class="hero-lyrics-stage">
+                  <div class="hero-lyrics-track">
+                    <p id="nowPlayingLyricCurrent" class="hero-lyrics-current" aria-live="polite"></p>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="hero-right-column">
               <div class="hero-track-text">
@@ -1012,14 +1282,12 @@
                 <div id="nowPlayingAlbumHero" class="track-sub"></div>
               </div>
               <div class="playback-control-bar">
-                <button id="quickPreviousButton" type="button" class="ghost-button">Previous</button>
-                <button id="quickPauseResumeButton" type="button">Pause</button>
-                <button id="quickNextButton" type="button" class="ghost-button">Next</button>
+                <button id="quickPreviousButton" type="button" class="ghost-button icon-button" aria-label="Previous">⏮</button>
+                <button id="quickPauseResumeButton" type="button" class="icon-button" aria-label="Pause">⏸</button>
+                <button id="quickNextButton" type="button" class="ghost-button icon-button" aria-label="Next">⏭</button>
               </div>
               <div class="playback-control-bar secondary">
                 <button id="quickPlayNowButton" type="button">Play now</button>
-                <button id="quickQueueOnlyButton" type="button" class="ghost-button">Queue only</button>
-                <button id="quickQueueAndSeekButton" type="button">Queue + seek</button>
               </div>
               <div class="np-progress-stack">
                 <div class="progress-shell">
@@ -1030,12 +1298,6 @@
                   <span id="nowPlayingRemainingText" class="time-mono time-remaining">remaining 0:00</span>
                 </div>
               </div>
-            </div>
-          </div>
-          <div class="hero-lyrics-shell">
-            <div class="hero-lyrics-label">Lyrics</div>
-            <div id="nowPlayingLyricLine" class="hero-lyrics-line">
-              Connect Spotify and hit play — lyrics appear here.
             </div>
           </div>
           <div id="nowPlayingVisualizer" class="hero-visualizer" aria-hidden="true"></div>
@@ -1050,7 +1312,9 @@
         </div>
         <p id="actionInlineStatus" class="inline-status hidden"></p>
       </section>
+      </div>
 
+      <div class="app-view" id="view-vibe" data-view-panel="vibe">
       <section id="recommendationCard" class="card">
         <div class="section-head">
           <h2>Next vibe</h2>
@@ -1130,6 +1394,20 @@
         <div id="recommendationCandidates" class="candidate-list"></div>
       </section>
 
+      <section id="smartQueueCard" class="card">
+        <div class="section-head">
+          <h2>Smart queue</h2>
+          <button id="queueSmartQueueButton" type="button" class="btn-primary-cta">
+            Queue Smart Flow
+          </button>
+        </div>
+        <p class="hint">
+          Plans and queues a run of upcoming tracks for the smoothest BPM, harmonic key (Camelot wheel), and energy flow — like an AI DJ set list.
+        </p>
+        <p id="smartQueueStatus" class="hint">Queue a smart flow to line up several tracks at once.</p>
+        <p id="smartQueueInlineStatus" class="inline-status hidden"></p>
+      </section>
+
       <section class="card card-playback-transitions">
         <h2 class="section-head" style="margin: 0 0 14px">Playback &amp; transitions</h2>
         <div class="playback-transition-inner">
@@ -1180,6 +1458,129 @@
           </div>
         </div>
       </section>
+      </div>
+
+      <div class="app-view" id="view-settings" data-view-panel="settings">
+      <section class="card">
+        <div class="section-head">
+          <h2>Connect a service</h2>
+        </div>
+        <div class="provider-connect-grid">
+          <button id="connectSpotifyButton" type="button" class="provider-connect-card provider-connect-card--spotify">
+            <span class="provider-connect-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="12" fill="#1DB954" />
+                <path d="M6.4 9.7c3.7-1.1 8.1-.9 11.3 1" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none" />
+                <path d="M6.7 13c3-.9 6.7-.7 9.5.8" stroke="#fff" stroke-width="1.35" stroke-linecap="round" fill="none" />
+                <path d="M7.1 16.1c2.4-.6 5.3-.5 7.5.7" stroke="#fff" stroke-width="1.1" stroke-linecap="round" fill="none" />
+              </svg>
+            </span>
+            <span class="provider-connect-text">
+              <span id="connectSpotifyButtonLabel" class="provider-connect-title">Connect Spotify</span>
+              <span id="connectSpotifyHint" class="provider-connect-sub">One-time sign-in to link your account.</span>
+            </span>
+          </button>
+          <button id="connectSoundcloudButton" type="button" class="provider-connect-card provider-connect-card--soundcloud">
+            <span class="provider-connect-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="12" fill="#FF5500" />
+                <g fill="#fff">
+                  <rect x="5.6" y="12.2" width="1.25" height="4.6" rx="0.6" />
+                  <rect x="7.3" y="10.3" width="1.25" height="6.5" rx="0.6" />
+                  <rect x="9" y="8.8" width="1.25" height="8" rx="0.6" />
+                  <path d="M10.9 9.5c.28-.16.6-.25.95-.25 1.5 0 2.75 1.05 3.05 2.45.28-.1.58-.15.9-.15 1.25 0 2.25 1 2.25 2.25s-1 2.25-2.25 2.25h-4.4a.5.5 0 0 1-.5-.5V10c0-.2.1-.4.3-.5z" />
+                </g>
+              </svg>
+            </span>
+            <span class="provider-connect-text">
+              <span class="provider-connect-title">Connect SoundCloud</span>
+              <span class="provider-connect-sub">Beta — full playback coming soon.</span>
+            </span>
+          </button>
+          <button id="connectAppleMusicButton" type="button" class="provider-connect-card provider-connect-card--apple">
+            <span class="provider-connect-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="appleMusicIconGrad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stop-color="#FA5C7C" />
+                    <stop offset="100%" stop-color="#FA243C" />
+                  </linearGradient>
+                </defs>
+                <circle cx="12" cy="12" r="12" fill="url(#appleMusicIconGrad)" />
+                <path d="M15.5 7.2v6.4a2.3 2.3 0 1 1-1.1-1.96V9.55l-4 .9v4.2a2.3 2.3 0 1 1-1.1-1.95V8.4c0-.28.2-.52.47-.58l5-1.13c.4-.09.73.2.73.51z" fill="#fff" />
+              </svg>
+            </span>
+            <span class="provider-connect-text">
+              <span class="provider-connect-title">Connect Apple Music</span>
+              <span class="provider-connect-sub">Beta — full playback coming soon.</span>
+            </span>
+          </button>
+          <button id="connectYoutubeMusicButton" type="button" class="provider-connect-card provider-connect-card--youtube-music">
+            <span class="provider-connect-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="12" fill="#FF0000" />
+                <circle cx="12" cy="12" r="6.4" fill="#fff" />
+                <circle cx="12" cy="12" r="5.1" fill="#FF0000" />
+                <path d="M10.3 9.3l4.2 2.7-4.2 2.7z" fill="#fff" />
+              </svg>
+            </span>
+            <span class="provider-connect-text">
+              <span class="provider-connect-title">Connect YouTube Music</span>
+              <span class="provider-connect-sub">Beta — full playback coming soon.</span>
+            </span>
+          </button>
+          <button id="connectTidalButton" type="button" class="provider-connect-card provider-connect-card--tidal">
+            <span class="provider-connect-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="12" fill="#000" />
+                <g fill="#fff">
+                  <rect x="10.6" y="4.8" width="2.8" height="2.8" transform="rotate(45 12 6.2)" />
+                  <rect x="5.8" y="9.6" width="2.8" height="2.8" transform="rotate(45 7.2 11)" />
+                  <rect x="15.4" y="9.6" width="2.8" height="2.8" transform="rotate(45 16.8 11)" />
+                  <rect x="10.6" y="14.4" width="2.8" height="2.8" transform="rotate(45 12 15.8)" />
+                </g>
+              </svg>
+            </span>
+            <span class="provider-connect-text">
+              <span class="provider-connect-title">Connect Tidal</span>
+              <span class="provider-connect-sub">Beta — full playback coming soon.</span>
+            </span>
+          </button>
+        </div>
+        <div id="platformBetaBanner" class="platform-beta-banner hidden" role="status">
+          <strong>BETA:</strong>
+          <span id="platformBetaLabel">This platform</span> integration is pending — switch to Spotify for full playback.
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Personalization</h2>
+        </div>
+        <p class="hint">Optional signals used to lightly bias recommendations. Nothing here leaves this app except your region, which already comes from your Spotify profile.</p>
+        <div class="field">
+          <label for="useLocationButton">Location</label>
+          <div class="connect-row">
+            <button id="useLocationButton" type="button">Use my location</button>
+            <span id="locationStatus" class="hint">Off — region comes from your Spotify profile.</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="listenerAge">Age (optional)</label>
+          <input id="listenerAge" type="number" min="13" max="100" placeholder="e.g. 28" />
+        </div>
+        <div class="field">
+          <label for="listenerGender">Gender (optional)</label>
+          <select id="listenerGender">
+            <option value="unspecified">Prefer not to say</option>
+            <option value="female">Female</option>
+            <option value="male">Male</option>
+            <option value="nonbinary">Non-binary</option>
+            <option value="other">Other</option>
+          </select>
+          <p class="hint">Saved with your session. Spotify doesn't expose listening data by age or gender, so this isn't used to match you to other listeners — reserved for future personalization.</p>
+        </div>
+      </section>
 
       <details id="systemConfigDetails" class="card system-config">
         <summary>System config</summary>
@@ -1190,6 +1591,8 @@
             <option value="spotify">Spotify</option>
             <option value="soundcloud">SoundCloud (soon)</option>
             <option value="apple_music">Apple Music (soon)</option>
+            <option value="youtube_music">YouTube Music (soon)</option>
+            <option value="tidal">Tidal (soon)</option>
           </select>
           <p id="providerStatus" class="hint">Spotify is fully supported.</p>
         </div>
@@ -1217,13 +1620,23 @@
         </div>
         <div class="field">
           <label for="deviceId">Device ID (optional)</label>
-          <input id="deviceId" type="text" placeholder="Leave empty for default device" />
+          <input
+            id="deviceId"
+            type="text"
+            placeholder="Leave empty — a device is chosen automatically when you play or queue"
+          />
+        </div>
+        <div class="field">
+          <label for="lyricOffsetMs">Lyric offset (ms)</label>
+          <input id="lyricOffsetMs" type="number" min="-8000" max="8000" step="50" value="0" />
+          <p class="hint">Negative if lyrics lead the audio; positive if they lag.</p>
         </div>
         <div class="field">
           <h3 style="margin: 12px 0 8px; font-size: 14px">Activity log</h3>
           <ul id="statusLog"></ul>
         </div>
       </details>
+      </div>
 
       <section id="fallbackCard" class="card hidden">
         <h2>Manual seek</h2>

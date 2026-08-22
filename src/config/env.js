@@ -19,7 +19,7 @@ if (missingKeys.length > 0) {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
-  port: Number(process.env.PORT ?? 3000),
+  port: Number(process.env.PORT ?? 4200),
   appBaseUrl: process.env.APP_BASE_URL,
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET,

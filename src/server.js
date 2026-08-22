@@ -11,9 +11,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "..", "public");
 
+const LOCAL_DEV_ORIGIN_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
 app.use(
   cors({
-    origin: env.appBaseUrl,
+    origin(origin, callback) {
+      if (!origin || origin === env.appBaseUrl || LOCAL_DEV_ORIGIN_PATTERN.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
     credentials: true
   })
 );

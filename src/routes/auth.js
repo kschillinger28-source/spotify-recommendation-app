@@ -4,6 +4,7 @@ import { env } from "../config/env.js";
 import {
   addTrackToQueue,
   buildSpotifyAuthorizeUrl,
+  ensureSpotifyPlaybackDevice,
   exchangeCodeForTokens,
   fetchCurrentUserProfile,
   getArtistsByIds,
@@ -34,6 +35,7 @@ const lyricsCache = new Map();
 const AUDIO_ANALYSIS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const audioAnalysisCache = new Map();
 const issuedOauthStates = new Map();
+const issuedMobileOauthStates = new Map();
 const sessionStore = new SessionStateStore();
 const vibeEngine = new VibeEngine(sessionStore);
 
@@ -160,6 +162,37 @@ async function handleRecommendationRequest(req, res, { forDj = false } = {}) {
       error: forDj
         ? "Could not build DJ recommendation plan."
         : "Could not build next-song recommendation plan.",
+      details: error.message
+    });
+  }
+}
+
+async function handleSmartQueueRequest(req, res) {
+  const token = getBearerTokenFromRequest(req);
+  const sessionId = getSessionIdFromRequest(req);
+  const userContext = getUserContextFromRequest(req);
+  const rawLength = req.body?.queueLength ?? req.query?.queueLength;
+  const queueLength = Number.isFinite(Number(rawLength)) ? Number(rawLength) : 5;
+
+  if (!token) {
+    return res.status(401).json({
+      error: "Missing Bearer access token."
+    });
+  }
+  if (!sessionId) {
+    return res.status(400).json({
+      error: "Missing sessionId (header x-dj-session-id or query)."
+    });
+  }
+
+  try {
+    const smartQueue = await vibeEngine.buildSmartQueue(token, sessionId, userContext, {
+      queueLength
+    });
+    return res.status(200).json(smartQueue);
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not build smart queue.",
       details: error.message
     });
   }
@@ -554,6 +587,73 @@ router.get("/spotify/callback", async (req, res) => {
   }
 });
 
+function pruneExpiredMobileOauthStates(nowMs = Date.now()) {
+  for (const [state, entry] of issuedMobileOauthStates.entries()) {
+    if (!Number.isFinite(entry?.expiresAtMs) || entry.expiresAtMs <= nowMs) {
+      issuedMobileOauthStates.delete(state);
+    }
+  }
+}
+
+router.get("/spotify/mobile/authorize-url", (req, res) => {
+  const redirectUri = String(req.query.redirectUri ?? "").trim();
+  if (!redirectUri) {
+    return res.status(400).json({
+      error: "Missing redirectUri query parameter."
+    });
+  }
+
+  pruneExpiredMobileOauthStates();
+  const state = crypto.randomBytes(24).toString("hex");
+  issuedMobileOauthStates.set(state, {
+    expiresAtMs: Date.now() + OAUTH_STATE_TTL_MS,
+    redirectUri
+  });
+  const url = buildSpotifyAuthorizeUrl(state, redirectUri);
+
+  return res.status(200).json({
+    url,
+    state
+  });
+});
+
+router.post("/spotify/mobile/exchange", async (req, res) => {
+  const code = req.body?.code;
+  const state = String(req.body?.state ?? "");
+
+  if (!code || !state) {
+    return res.status(400).json({
+      error: "Missing code or state in request body."
+    });
+  }
+
+  pruneExpiredMobileOauthStates();
+  const stateEntry = issuedMobileOauthStates.get(state);
+  const isServerStateValid =
+    stateEntry && Number.isFinite(stateEntry.expiresAtMs) && stateEntry.expiresAtMs > Date.now();
+
+  if (!isServerStateValid) {
+    return res.status(400).json({
+      error: "Invalid or expired OAuth state. Try connecting again."
+    });
+  }
+
+  try {
+    const tokens = await exchangeCodeForTokens(String(code), stateEntry.redirectUri);
+    issuedMobileOauthStates.delete(state);
+
+    return res.status(200).json({
+      message: "Spotify OAuth completed successfully.",
+      tokens
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Spotify token exchange failed.",
+      details: error.message
+    });
+  }
+});
+
 router.post("/spotify/refresh", async (req, res) => {
   const refreshToken = getRefreshTokenFromRequestBody(req.body);
 
@@ -741,10 +841,17 @@ router.post("/spotify/player/queue", async (req, res) => {
   }
 
   try {
-    await addTrackToQueue(token, trackUri, deviceId);
+    const ensured = await ensureSpotifyPlaybackDevice(
+      token,
+      deviceId && String(deviceId).trim() ? String(deviceId).trim() : null
+    );
+    await addTrackToQueue(token, trackUri, ensured.deviceId);
     return res.status(200).json({
       message: "Track added to queue.",
-      trackUri
+      trackUri,
+      deviceId: ensured.deviceId,
+      deviceName: ensured.deviceName,
+      deviceType: ensured.deviceType
     });
   } catch (error) {
     return res.status(502).json({
@@ -922,15 +1029,22 @@ router.put("/spotify/player/play-now", async (req, res) => {
   }
 
   try {
+    const ensured = await ensureSpotifyPlaybackDevice(
+      token,
+      deviceId && String(deviceId).trim() ? String(deviceId).trim() : null
+    );
     const result = await playTrackNow(
       token,
       trackUri,
-      deviceId,
+      ensured.deviceId,
       Math.round(positionMs)
     );
     return res.status(200).json({
       message: "Playback started immediately.",
-      ...result
+      ...result,
+      deviceId: ensured.deviceId,
+      deviceName: ensured.deviceName,
+      deviceType: ensured.deviceType
     });
   } catch (error) {
     return res.status(502).json({
@@ -1169,5 +1283,8 @@ router.get("/spotify/dj/recommend/next", (req, res) =>
 router.post("/spotify/dj/recommend/next", (req, res) =>
   handleRecommendationRequest(req, res, { forDj: true })
 );
+
+router.get("/spotify/dj/smart-queue", (req, res) => handleSmartQueueRequest(req, res));
+router.post("/spotify/dj/smart-queue", (req, res) => handleSmartQueueRequest(req, res));
 
 export default router;

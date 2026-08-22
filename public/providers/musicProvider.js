@@ -6,11 +6,13 @@
 export const PROVIDER = {
   SPOTIFY: "spotify",
   APPLE_MUSIC: "apple_music",
-  SOUNDCLOUD: "soundcloud"
+  SOUNDCLOUD: "soundcloud",
+  YOUTUBE_MUSIC: "youtube_music",
+  TIDAL: "tidal"
 };
 
 /**
- * @returns {"spotify"|"apple_music"|"soundcloud"|null}
+ * @returns {"spotify"|"apple_music"|"soundcloud"|"youtube_music"|"tidal"|null}
  */
 export function detectProviderFromUrl(text) {
   const raw = String(text ?? "")
@@ -41,6 +43,12 @@ export function detectProviderFromUrl(text) {
       }
       if (h === "open.spotify.com" || h.endsWith(".spotify.com")) {
         return PROVIDER.SPOTIFY;
+      }
+      if (h === "music.youtube.com") {
+        return PROVIDER.YOUTUBE_MUSIC;
+      }
+      if (h === "tidal.com" || h.endsWith(".tidal.com")) {
+        return PROVIDER.TIDAL;
       }
     } catch {
       return null;
@@ -81,6 +89,20 @@ export function getProviderStrategy(provider) {
         playbackReady: false,
         searchReady: false
       };
+    case PROVIDER.YOUTUBE_MUSIC:
+      return {
+        id: PROVIDER.YOUTUBE_MUSIC,
+        label: "YouTube Music",
+        playbackReady: false,
+        searchReady: false
+      };
+    case PROVIDER.TIDAL:
+      return {
+        id: PROVIDER.TIDAL,
+        label: "Tidal",
+        playbackReady: false,
+        searchReady: false
+      };
     default:
       return {
         id: String(provider ?? ""),
@@ -99,6 +121,10 @@ export function resolvePlaybackRoute(provider, action) {
       return { delegate: "appleMusic", action, pending: true };
     case PROVIDER.SOUNDCLOUD:
       return { delegate: "soundcloud", action, pending: true };
+    case PROVIDER.YOUTUBE_MUSIC:
+      return { delegate: "youtubeMusic", action, pending: true };
+    case PROVIDER.TIDAL:
+      return { delegate: "tidal", action, pending: true };
     default:
       return { delegate: "unknown", action, pending: true };
   }
@@ -112,10 +138,26 @@ export async function playSoundCloud() {
   /* Wire to SoundCloud playback when ready */
 }
 
+export async function playYoutubeMusic() {
+  /* Wire to YouTube Music (Innertube/YTM) playback when ready */
+}
+
+export async function playTidal() {
+  /* Wire to Tidal playback when ready */
+}
+
 export async function queueAppleMusic() {
   /* Wire to Apple Music queue when ready */
 }
 
 export async function queueSoundCloud() {
   /* Wire to SoundCloud queue when ready */
+}
+
+export async function queueYoutubeMusic() {
+  /* Wire to YouTube Music queue when ready */
+}
+
+export async function queueTidal() {
+  /* Wire to Tidal queue when ready */
 }

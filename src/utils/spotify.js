@@ -8,11 +8,11 @@ function getBasicAuthHeader() {
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 }
 
-export function buildSpotifyAuthorizeUrl(state) {
+export function buildSpotifyAuthorizeUrl(state, redirectUri = env.spotifyRedirectUri) {
   const params = new URLSearchParams({
     client_id: env.spotifyClientId,
     response_type: "code",
-    redirect_uri: env.spotifyRedirectUri,
+    redirect_uri: redirectUri,
     scope: env.spotifyScopes,
     state,
     show_dialog: "true"
@@ -41,11 +41,11 @@ async function fetchSpotifyToken(bodyParams) {
   return payload;
 }
 
-export function exchangeCodeForTokens(code) {
+export function exchangeCodeForTokens(code, redirectUri = env.spotifyRedirectUri) {
   return fetchSpotifyToken({
     grant_type: "authorization_code",
     code,
-    redirect_uri: env.spotifyRedirectUri
+    redirect_uri: redirectUri
   });
 }
 
@@ -193,6 +193,84 @@ export function getCurrentPlayback(accessToken) {
     accessToken,
     allowNoContent: true
   });
+}
+
+const CONNECT_DEVICE_TYPE_PRIORITY = [
+  "Computer",
+  "Smartphone",
+  "Tablet",
+  "Speaker",
+  "Tv",
+  "Castaudio",
+  "Automobile",
+  "AVR",
+  "Unknown"
+];
+
+function pickBestConnectDevice(devices, preferredDeviceId) {
+  const usable = (devices ?? []).filter((d) => d?.id && !d.is_restricted);
+  if (usable.length === 0) {
+    return null;
+  }
+  if (preferredDeviceId) {
+    const preferred = usable.find((d) => d.id === preferredDeviceId);
+    if (preferred) {
+      return preferred;
+    }
+  }
+  const active = usable.find((d) => d.is_active);
+  if (active) {
+    return active;
+  }
+  let best = usable[0];
+  let bestPri = 999;
+  for (const d of usable) {
+    const idx = CONNECT_DEVICE_TYPE_PRIORITY.indexOf(String(d.type ?? "Unknown"));
+    const pri = idx === -1 ? 50 : idx;
+    if (pri < bestPri) {
+      bestPri = pri;
+      best = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Picks a Spotify Connect device and transfers playback to it when needed so
+ * /me/player/play and /queue work even if nothing was playing yet.
+ */
+export async function ensureSpotifyPlaybackDevice(accessToken, preferredDeviceId) {
+  const payload = await spotifyApiRequest({
+    method: "GET",
+    path: "/me/player/devices",
+    accessToken
+  });
+  const picked = pickBestConnectDevice(payload?.devices, preferredDeviceId);
+  if (!picked) {
+    throw new Error(
+      "No Spotify Connect device is available. Open the Spotify app on this computer or phone, or open open.spotify.com in a tab once, then try again."
+    );
+  }
+  if (!picked.is_active) {
+    await spotifyApiRequest({
+      method: "PUT",
+      path: "/me/player",
+      accessToken,
+      body: {
+        device_ids: [picked.id],
+        play: false
+      },
+      allowNoContent: true
+    });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 450);
+    });
+  }
+  return {
+    deviceId: picked.id,
+    deviceName: picked.name ?? null,
+    deviceType: picked.type ?? null
+  };
 }
 
 export async function seekCurrentPlayback(accessToken, positionMs, deviceId) {
@@ -576,7 +654,13 @@ export async function getAudioFeaturesByTrackIds(accessToken, trackIds = []) {
       energy: Number.isFinite(item.energy) ? item.energy : null,
       danceability: Number.isFinite(item.danceability) ? item.danceability : null,
       valence: Number.isFinite(item.valence) ? item.valence : null,
-      loudness: Number.isFinite(item.loudness) ? item.loudness : null
+      loudness: Number.isFinite(item.loudness) ? item.loudness : null,
+      acousticness: Number.isFinite(item.acousticness) ? item.acousticness : null,
+      instrumentalness: Number.isFinite(item.instrumentalness) ? item.instrumentalness : null,
+      speechiness: Number.isFinite(item.speechiness) ? item.speechiness : null,
+      liveness: Number.isFinite(item.liveness) ? item.liveness : null,
+      key: Number.isInteger(item.key) && item.key >= 0 ? item.key : null,
+      mode: item.mode === 0 || item.mode === 1 ? item.mode : null
     };
   }
 
