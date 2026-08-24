@@ -213,6 +213,11 @@
         transform: translateY(-1px);
       }
 
+      .btn-primary-cta:focus-visible {
+        outline: 2px solid rgba(0, 209, 255, 0.85);
+        outline-offset: 3px;
+      }
+
       .connect-row {
         display: flex;
         flex-wrap: wrap;
@@ -228,6 +233,21 @@
         padding: 10px 16px;
         font-weight: 600;
         cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+      }
+
+      button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.16);
+        border-color: rgba(255, 255, 255, 0.24);
+      }
+
+      button:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+
+      button:focus-visible {
+        outline: 2px solid rgba(0, 209, 255, 0.6);
+        outline-offset: 2px;
       }
 
       button:disabled {
@@ -238,6 +258,11 @@
       .ghost-button {
         background: rgba(255, 255, 255, 0.06);
         border: 1px solid rgba(255, 255, 255, 0.18);
+      }
+
+      .ghost-button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.28);
       }
 
       .button-row {
@@ -299,6 +324,11 @@
       .provider-connect-card:hover:not(:disabled) {
         transform: translateY(-1px);
         background: rgba(255, 255, 255, 0.08);
+      }
+
+      .provider-connect-card:focus-visible {
+        outline: 2px solid rgba(0, 209, 255, 0.6);
+        outline-offset: 2px;
       }
 
       .provider-connect-card--spotify:hover:not(:disabled) {
@@ -363,6 +393,8 @@
       }
 
       .np-progress-stack .progress-shell {
+        cursor: pointer;
+        user-select: none;
         margin-top: 0;
       }
 
@@ -729,11 +761,11 @@
         white-space: nowrap;
         padding-left: 100%;
         font-family: "Bebas Neue", "Space Grotesk", system-ui, sans-serif;
-        font-size: clamp(1.15rem, 7.4cqw, 2.1rem);
+        font-size: clamp(1.5rem, 10cqw, 3rem);
         letter-spacing: 0.045em;
         color: #ffffff;
         text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
-        animation: heroLyricsMarquee 9s linear infinite;
+        animation: heroLyricsMarquee 18s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
         will-change: transform;
       }
 
@@ -803,6 +835,8 @@
       }
 
       .progress-shell {
+        cursor: pointer;
+        user-select: none;
         margin-top: 12px;
         width: 100%;
         height: 8px;
@@ -1203,11 +1237,188 @@
         grid-template-columns: 92px 1fr;
         gap: 12px;
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        .now-playing-hero-bg {
+          animation: none;
+          transform: scale(1.08);
+        }
+
+        .hero-lyrics-current {
+          animation: none;
+          padding-left: 0;
+          white-space: normal;
+        }
+
+        .app-view.is-active {
+          animation: none;
+        }
+      }
+
+      /* Enhanced button feedback */
+      button {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .btn-primary-cta:hover:not(:disabled) {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 28px rgba(0, 209, 255, 0.4);
+      }
+
+      .btn-primary-cta:active:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 209, 255, 0.25);
+      }
+
+      button.ghost-button:hover:not(:disabled) {
+        transform: translateY(-2px);
+      }
+
+      button:focus-visible {
+        outline: 3px solid #5e6dff;
+        outline-offset: 3px;
+      }
+
+      /* Improved form input visibility */
+      .field input,
+      .field select,
+      .playback-num-input {
+        border: 2px solid rgba(94, 109, 255, 0.3);
+        background: rgba(255, 255, 255, 0.04);
+        transition: all 0.2s ease;
+      }
+
+      .field input::placeholder,
+      .field select::placeholder,
+      .playback-num-input::placeholder {
+        color: #7a8bb8;
+        opacity: 1;
+      }
+
+      .field input:focus,
+      .field select:focus,
+      .playback-num-input:focus {
+        border-color: #5e6dff;
+        background: rgba(94, 109, 255, 0.08);
+        box-shadow: 0 0 0 3px rgba(94, 109, 255, 0.1);
+      }
+
+      /* Loading spinner overlay */
+      #loadingOverlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(6, 8, 16, 0.75);
+        backdrop-filter: blur(4px);
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #loadingOverlay.show {
+        display: flex;
+      }
+
+      .spinner-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .spinner-ring {
+        width: 52px;
+        height: 52px;
+        border: 4px solid rgba(94, 109, 255, 0.2);
+        border-top: 4px solid #5e6dff;
+        border-radius: 50%;
+        animation: spin 0.85s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .spinner-text {
+        font-size: 15px;
+        color: #b2c2ee;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 0.7;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      /* Tab transition enhancement */
+      .app-nav-tab {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .app-nav-tab:hover:not(.is-active) {
+        transform: translateY(-1px);
+      }
+
+      .app-view {
+        animation: fadeIn 0.2s ease-out;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      /* Button state clarity */
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+
+      button:disabled:hover {
+        transform: none !important;
+        box-shadow: none !important;
+      }
+
+      /* Provider card disabled state */
+      .provider-connect-card:disabled,
+      [disabled] .provider-connect-card {
+        opacity: 0.5;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
     <div id="pageVibeBackground" aria-hidden="true"></div>
     <div class="ambient"></div>
+
+    <!-- Loading spinner overlay -->
+    <div id="loadingOverlay" aria-hidden="true">
+      <div class="spinner-container">
+        <div class="spinner-ring"></div>
+        <p class="spinner-text" id="spinnerText">Loading...</p>
+      </div>
+    </div>
+
     <main class="container">
       <header class="app-header">
         <h1>The Vibe</h1>
@@ -1215,9 +1426,9 @@
       </header>
 
       <nav class="app-nav" role="tablist" aria-label="Sections">
-        <button type="button" class="app-nav-tab" data-view="player" role="tab" aria-selected="false">Player</button>
-        <button type="button" class="app-nav-tab" data-view="vibe" role="tab" aria-selected="false">Vibe</button>
-        <button type="button" class="app-nav-tab" data-view="settings" role="tab" aria-selected="false">Settings</button>
+        <button type="button" class="app-nav-tab" data-view="player" role="tab" aria-selected="false" aria-controls="view-player">Player</button>
+        <button type="button" class="app-nav-tab" data-view="vibe" role="tab" aria-selected="false" aria-controls="view-vibe">Vibe</button>
+        <button type="button" class="app-nav-tab" data-view="settings" role="tab" aria-selected="false" aria-controls="view-settings">Settings</button>
       </nav>
 
       <div class="app-view" id="view-player" data-view-panel="player">
@@ -1652,3 +1863,29 @@
     <script src="/app.js" type="module"></script>
   </body>
 </html>
+      <style>
+        /* Smooth transitions for professional feel */
+        * {
+          transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+        }
+        
+        /* Loading shimmer effect */
+        @keyframes shimmer {
+          0% { opacity: 0.6; }
+          50% { opacity: 1; }
+          100% { opacity: 0.6; }
+        }
+        
+        .loading {
+          animation: shimmer 1.5s infinite;
+        }
+        
+        /* Reduce motion for accessibility */
+        @media (prefers-reduced-motion: reduce) {
+          * {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+          }
+        }
+      </style>

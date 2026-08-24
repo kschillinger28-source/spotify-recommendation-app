@@ -1,5 +1,14 @@
 import { detectProviderFromUrl, getProviderStrategy } from "./providers/musicProvider.js";
 import { UniversalPlayer } from "./universalPlayer.js";
+import {
+  showLoadingSpinner,
+  hideLoadingSpinner,
+  enhanceTabNavigation,
+  enhanceFormInputs,
+  updateTabAriaAttributes,
+  saveScrollPosition,
+  restoreScrollPosition
+} from "./app-helpers.js";
 
 const ACCESS_TOKEN_KEY = "spotify_helper_access_token";
 const REFRESH_TOKEN_KEY = "spotify_helper_refresh_token";
@@ -545,6 +554,14 @@ function getActiveAppView() {
 
 function setActiveAppView(viewName) {
   const name = APP_VIEW_NAMES.includes(viewName) ? viewName : "player";
+  
+  // Save scroll position of currently active view
+  const currentView = document.querySelector(".app-view.is-active");
+  if (currentView) {
+    const currentViewName = currentView.id.replace("view-", "");
+    saveScrollPosition(currentViewName);
+  }
+  
   localStorage.setItem(ACTIVE_APP_VIEW_KEY, name);
 
   for (const tab of document.querySelectorAll(".app-nav-tab")) {
@@ -556,6 +573,11 @@ function setActiveAppView(viewName) {
   for (const panel of document.querySelectorAll(".app-view")) {
     panel.classList.toggle("is-active", panel.dataset.viewPanel === name);
   }
+  
+  // Restore scroll position for new view
+  requestAnimationFrame(() => {
+    restoreScrollPosition(name);
+  });
 }
 
 function moodLabelFromLevel(level) {
@@ -858,6 +880,64 @@ async function refreshSpotifyProfileContext({ silent = true } = {}) {
   })();
 
   return spotifyProfileFetchPromise;
+}
+
+async function loadPersonalizationData({ silent = true } = {}) {
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) return null;
+
+  try {
+    const data = await apiRequest(
+      "/auth/personalization",
+      "GET",
+      accessToken
+    );
+    if (data) {
+      if (data.country) {
+        elements.locationStatus.textContent = `From Spotify: ${data.country}`;
+      }
+      if (data.age) {
+        elements.listenerAge.value = data.age;
+      }
+      if (data.gender && data.gender !== 'unspecified') {
+        elements.listenerGender.value = data.gender;
+      }
+    }
+    return data;
+  } catch (error) {
+    if (!silent) {
+      logStatus(`Could not load personalization data: ${error.message}`);
+    }
+    return null;
+  }
+}
+
+async function savePersonalizationData() {
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) return false;
+
+  const age = Number(elements.listenerAge.value);
+  const gender = elements.listenerGender.value;
+
+  if (!age || !gender || gender === 'unspecified') {
+    return false;
+  }
+
+  try {
+    const result = await apiRequest(
+      "/auth/personalization",
+      "POST",
+      accessToken,
+      { age, gender }
+    );
+    if (result?.saved) {
+      logStatus("Personalization settings saved.");
+      return true;
+    }
+  } catch (error) {
+    logStatus(`Could not save personalization: ${error.message}`);
+  }
+  return false;
 }
 
 function nostalgiaLabelFromLevel(n) {
@@ -1187,15 +1267,6 @@ function renderSearchResults(tracks) {
     const album = track.albumName || "Unknown album";
     meta.textContent = `${artists} • ${album} • ${formatDurationMs(track.durationMs)}`;
 
-    const useButton = document.createElement("button");
-    useButton.type = "button";
-    useButton.textContent = "Use This Track";
-    useButton.addEventListener("click", () => {
-      setTrackInput(track.uri);
-      logStatus(
-        `Selected "${track.name}" (${track.uri}) into Track URI. Queue from URI or use Quick Actions.`
-      );
-    });
 
     const playNowButton = document.createElement("button");
     playNowButton.type = "button";
@@ -1231,7 +1302,6 @@ function renderSearchResults(tracks) {
 
     const actions = document.createElement("div");
     actions.className = "result-actions";
-    actions.appendChild(useButton);
     actions.appendChild(playNowButton);
     actions.appendChild(queueButton);
     actions.appendChild(queueSeekButton);
@@ -2917,6 +2987,7 @@ function applyTokensFromUrlIfPresent() {
   }
   saveInputsToLocalStorage();
   refreshSpotifyProfileContext({ silent: true });
+  loadPersonalizationData({ silent: true });
   if (hashAuthError) {
     logStatus(`Spotify connect failed: ${hashAuthError}`);
     setActionInlineStatus(`Spotify connect failed: ${hashAuthError}`, "error");
@@ -4192,6 +4263,7 @@ async function handleGenerateRecommendationClick() {
   }
 
   recommendationInFlight = true;
+  showLoadingSpinner("Generating vibe...");
   updateRecommendationButtons();
   setRecommendationInlineStatus("Reading your queue and mood…", "info");
   elements.recommendationStatus.textContent = "Tuning into your session…";
@@ -4221,6 +4293,7 @@ async function handleGenerateRecommendationClick() {
     setRecommendationInlineStatus(`Recommendation failed: ${error.message}`, "error");
     logStatus(`Recommendation failed: ${error.message}`);
   } finally {
+    hideLoadingSpinner();
     recommendationInFlight = false;
     updateRecommendationButtons();
   }
@@ -4289,7 +4362,8 @@ async function handleQueueTopCandidatesClick() {
 
     setActionButtonsDisabled(true);
     recommendationInFlight = true;
-    updateRecommendationButtons();
+  showLoadingSpinner("Generating vibe...");
+  updateRecommendationButtons();
     setActionInlineStatus("Queueing top recommendations...", "info");
 
     for (const item of queuePlan) {
@@ -4309,6 +4383,7 @@ async function handleQueueTopCandidatesClick() {
     logStatus(`Could not queue top recommendations: ${error.message}`);
     setActionInlineStatus(`Could not queue top recommendations: ${error.message}`, "error");
   } finally {
+    hideLoadingSpinner();
     recommendationInFlight = false;
     setActionButtonsDisabled(false);
     updateRecommendationButtons();
@@ -4414,8 +4489,14 @@ function bindEvents() {
     handleConnectProviderClick("tidal")
   );
   elements.useLocationButton.addEventListener("click", handleUseLocationClick);
-  elements.listenerAge.addEventListener("change", saveInputsToLocalStorage);
-  elements.listenerGender.addEventListener("change", saveInputsToLocalStorage);
+  elements.listenerAge.addEventListener("change", () => {
+    saveInputsToLocalStorage();
+    savePersonalizationData();
+  });
+  elements.listenerGender.addEventListener("change", () => {
+    saveInputsToLocalStorage();
+    savePersonalizationData();
+  });
   elements.nowPlayingVisualizer.addEventListener("click", handleEnableLiveSpectrumClick);
   elements.nowPlayingHeroBg.addEventListener("click", handleEnableLiveSpectrumClick);
   elements.nowPlayingHeroAlbumArt.addEventListener("click", handleEnableLiveSpectrumClick);
@@ -4558,10 +4639,12 @@ function init() {
   setRecommendationInlineStatus("");
   setActionInlineStatus("");
   bindEvents();
+  enhanceFormInputs();
   syncDjSessionMode();
   maybeResumePendingQueueWatcher();
   refreshNowPlaying({ silent: true });
   refreshSpotifyProfileContext({ silent: true });
+  loadPersonalizationData({ silent: true });
   void refreshLiveEnvironmentSignals();
   setInterval(() => void refreshLiveEnvironmentSignals(), ENV_SIGNALS_CACHE_TTL_MS);
   startNowPlayingPolling();
@@ -4571,3 +4654,189 @@ function init() {
 }
 
 init();
+
+// ============ DRAG-TO-SEEK, LYRICS PAUSE, AND PROGRESS HOVER BUBBLE ============
+
+// Track lyrics animation playback state
+let lyricsAnimationElement = null;
+
+// Intercept applyLyricMarqueeAnimation to add pause control
+const originalApplyLyricMarqueeAnimation = window.applyLyricMarqueeAnimation || function(){};
+window.applyLyricMarqueeAnimation = function(el, text, isPlaying) {
+  lyricsAnimationElement = el;
+  const durationSec = Math.max(6, Math.min(26, (text?.length || 0) * 0.115)) + 2;
+  el.style.animation = 'none';
+  void el.offsetWidth; // Force reflow
+  el.style.animation = `heroLyricsMarquee ${durationSec.toFixed(2)}s linear infinite`;
+  el.style.animationPlayState = isPlaying ? 'running' : 'paused';
+};
+
+// Listen for playback state changes to pause/resume lyrics
+const observer = new MutationObserver(() => {
+  const isPlayingNow = nowPlayingTickerState?.isPlaying;
+  if (lyricsAnimationElement && isPlayingNow !== undefined) {
+    lyricsAnimationElement.style.animationPlayState = isPlayingNow ? 'running' : 'paused';
+  }
+});
+
+observer.observe(document.body, { subtree: true, attributes: true });
+
+// Drag-to-seek with hover bubble
+(function initProgressBarWithHover() {
+  const progressShell = document.querySelector('.progress-shell');
+  if (!progressShell) return;
+  
+  let isDragging = false;
+  let hoverBubble = null;
+  
+  function createHoverBubble() {
+    if (!hoverBubble) {
+      hoverBubble = document.createElement('div');
+      hoverBubble.style.cssText = `
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        transform: translateX(-50%);
+        background: rgba(0, 209, 255, 0.95);
+        color: #ffffff;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+        pointer-events: none;
+        z-index: 100;
+        font-family: ui-monospace, monospace;
+        margin-bottom: 8px;
+      `;
+      progressShell.parentElement.style.position = 'relative';
+      progressShell.parentElement.appendChild(hoverBubble);
+    }
+    return hoverBubble;
+  }
+  
+  function updateBubble(e) {
+    const rect = progressShell.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    
+    const timeText = elements.nowPlayingProgressText?.textContent || '';
+    const [_, durationStr] = timeText.split(' / ');
+    if (!durationStr) return;
+    
+    const durationMs = parseTimeToMs(durationStr);
+    const seekMs = Math.round(durationMs * percentage);
+    const bubbleEl = createHoverBubble();
+    bubbleEl.textContent = formatMs(seekMs);
+    bubbleEl.style.left = `${clickX}px`;
+    bubbleEl.style.display = 'block';
+  }
+  
+  function hideBubble() {
+    if (hoverBubble) {
+      hoverBubble.style.display = 'none';
+    }
+  }
+  
+  progressShell.addEventListener('mousemove', updateBubble);
+  progressShell.addEventListener('mouseleave', hideBubble);
+  
+  progressShell.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    seekToClick(e);
+  });
+  
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    seekToClick(e);
+  });
+  
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    hideBubble();
+  });
+  
+  function seekToClick(e) {
+    const rect = progressShell.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    
+    const timeText = elements.nowPlayingProgressText?.textContent || '';
+    const [_, durationStr] = timeText.split(' / ');
+    if (!durationStr) return;
+    
+    const durationMs = parseTimeToMs(durationStr);
+    const seekMs = Math.round(durationMs * percentage);
+    
+    elements.nowPlayingProgressBar.style.width = `${(percentage * 100).toFixed(1)}%`;
+    elements.nowPlayingProgressText.textContent = `${formatMs(seekMs)} / ${durationStr}`;
+    
+    if (spotifyPlayer && typeof spotifyPlayer.seek === 'function') {
+      spotifyPlayer.seek(seekMs);
+    }
+  }
+  
+  function parseTimeToMs(timeStr) {
+    const parts = timeStr.split(':').map(p => parseInt(p, 10));
+    if (parts.length === 2) {
+      return (parts[0] * 60 + parts[1]) * 1000;
+    } else if (parts.length === 3) {
+      return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+    }
+    return 0;
+  }
+})();
+
+
+// ============ SEARCH DEBOUNCE & OPTIMIZATIONS ============
+let searchTimeout = null;
+const originalSearchTracks = window.searchTracks;
+
+window.searchTracks = function(query) {
+  clearTimeout(searchTimeout);
+  if (!query || query.length < 1) {
+    elements.searchResults.innerHTML = '<div class="result-empty">Type to search</div>';
+    return;
+  }
+  
+  // Show loading state
+  elements.searchResults.innerHTML = '<div class="result-empty">Searching...</div>';
+  
+  searchTimeout = setTimeout(() => {
+    originalSearchTracks(query);
+  }, 300); // Debounce API call by 300ms
+};
+
+// Cache audio analysis to avoid re-fetching
+const audioAnalysisCache = new Map();
+
+// Add connection retry logic
+let retryCount = 0;
+const maxRetries = 3;
+
+
+// ============ BETTER ERROR HANDLING & STATES ============
+function showLoadingState(element, message = 'Loading...') {
+  if (element) {
+    element.innerHTML = `<div style="text-align:center;opacity:0.6;padding:20px;">${message}</div>`;
+  }
+}
+
+function showErrorState(element, message = 'Something went wrong') {
+  if (element) {
+    element.innerHTML = `<div style="color:#ff6b6b;text-align:center;padding:20px;">${message}</div>`;
+  }
+}
+
+// Add retry logic to API calls
+async function callWithRetry(fn, maxAttempts = 3) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxAttempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+    }
+  }
+}
+
