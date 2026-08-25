@@ -952,6 +952,230 @@
         flex-wrap: wrap;
       }
 
+
+      .result-metadata {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+        gap: 8px;
+        margin: 10px 0 8px;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+      }
+
+      .metadata-metric {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 11px;
+      }
+
+      .metadata-label {
+        color: #8fa3d0;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .metadata-value {
+        color: #d6e4ff;
+        font-weight: 700;
+        font-size: 12px;
+      }
+
+      .metadata-bar {
+        height: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .metadata-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, rgba(0, 198, 255, 0.7), rgba(126, 255, 159, 0.7));
+        border-radius: 2px;
+        transition: width 0.3s ease;
+      }
+
+      .metadata-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        background: rgba(110, 150, 255, 0.2);
+        border: 1px solid rgba(110, 150, 255, 0.4);
+        border-radius: 6px;
+        font-size: 10px;
+        color: #b2d4ff;
+        width: fit-content;
+      }
+
+      .metadata-badge.match-high {
+        background: rgba(126, 255, 159, 0.2);
+        border-color: rgba(126, 255, 159, 0.4);
+        color: #7effc9;
+      }
+
+      .metadata-badge.match-low {
+        background: rgba(255, 100, 100, 0.2);
+        border-color: rgba(255, 100, 100, 0.4);
+        color: #ff9999;
+      }
+
+      @media (max-width: 480px) {
+        .result-metadata {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      .search-container {
+        display: flex;
+        gap: 16px;
+        margin-top: 14px;
+      }
+
+      .search-results-wrapper {
+        flex: 1;
+      }
+
+      .search-filters {
+        width: 200px;
+        max-height: 600px;
+        overflow-y: auto;
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .filter-section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .filter-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #8fa3d0;
+      }
+
+      .filter-control {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .filter-control select,
+      .filter-control input {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 6px;
+        color: #d6e4ff;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-family: system-ui, sans-serif;
+      }
+
+      .filter-control select option {
+        background: #0a0e1a;
+        color: #d6e4ff;
+      }
+
+      .filter-control input:focus,
+      .filter-control select:focus {
+        outline: none;
+        border-color: rgba(0, 198, 255, 0.4);
+        box-shadow: 0 0 0 2px rgba(0, 198, 255, 0.1);
+      }
+
+      .filter-range-values {
+        display: flex;
+        gap: 6px;
+        font-size: 11px;
+        color: #b2c2ee;
+      }
+
+      .pagination-controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+      }
+
+      .pagination-button {
+        padding: 6px 10px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        color: #b2c2ee;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.18s ease;
+      }
+
+      .pagination-button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.22);
+        color: #d6e4ff;
+      }
+
+      .pagination-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .pagination-button.active {
+        background: linear-gradient(135deg, rgba(0, 198, 255, 0.3), rgba(0, 198, 255, 0.15));
+        border-color: rgba(0, 198, 255, 0.4);
+        color: #7effc9;
+      }
+
+      .pagination-info {
+        font-size: 12px;
+        color: #8fa3d0;
+      }
+
+      .search-result-count {
+        font-size: 13px;
+        color: #b2c2ee;
+        margin-top: 8px;
+        text-align: center;
+      }
+
+      @media (max-width: 768px) {
+        .search-container {
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .search-filters {
+          width: 100%;
+          max-height: none;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        }
+      }
+
+      @media (max-width: 480px) {
+        .search-filters {
+          display: none;
+        }
+
+        .search-container {
+          gap: 8px;
+        }
+      }
       .result-empty {
         color: #b2c2ee;
         font-size: 14px;
@@ -1449,7 +1673,33 @@
             <button id="searchTracksButton" type="button">Search</button>
           </div>
           <p id="searchInlineStatus" class="inline-status hidden"></p>
-          <div id="searchResults"></div>
+          <div class="search-container">
+            <div class="search-filters">
+              <div class="filter-section">
+                <div class="filter-title">Results</div>
+                <div class="search-result-count" id="searchResultCount">0 tracks</div>
+              </div>
+              <div class="filter-section">
+                <div class="filter-title">Popularity</div>
+                <div class="filter-control">
+                  <label for="filterPopularity" style="font-size: 11px; color: #8fa3d0;">Minimum</label>
+                  <input type="range" id="filterPopularity" min="0" max="100" step="10" value="0" />
+                  <span class="filter-range-values" id="filterPopularityValue">All</span>
+                </div>
+              </div>
+              <div class="filter-section">
+                <button id="clearFiltersButton" type="button" class="pagination-button" style="width: 100%; margin-top: 8px;">Reset Filters</button>
+              </div>
+            </div>
+            <div class="search-results-wrapper">
+              <div id="searchResults"></div>
+              <div class="pagination-controls" id="paginationControls" style="display: none;">
+                <button id="paginationPrevButton" type="button" class="pagination-button">← Prev</button>
+                <span class="pagination-info" id="paginationInfo">Page 1</span>
+                <button id="paginationNextButton" type="button" class="pagination-button">Next →</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

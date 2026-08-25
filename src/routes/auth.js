@@ -34,6 +34,7 @@ const LYRICS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const lyricsCache = new Map();
 const AUDIO_ANALYSIS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const audioAnalysisCache = new Map();
+const personalizationStore = new Map();
 const issuedOauthStates = new Map();
 const issuedMobileOauthStates = new Map();
 const sessionStore = new SessionStateStore();
@@ -1286,5 +1287,89 @@ router.post("/spotify/dj/recommend/next", (req, res) =>
 
 router.get("/spotify/dj/smart-queue", (req, res) => handleSmartQueueRequest(req, res));
 router.post("/spotify/dj/smart-queue", (req, res) => handleSmartQueueRequest(req, res));
+
+router.get("/personalization", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: "Missing Bearer access token." });
+  }
+
+  try {
+    const profile = await fetchCurrentUserProfile(token);
+    const userId = profile.id;
+    const stored = personalizationStore.get(userId) || {};
+
+    return res.status(200).json({
+      country: profile.country || null,
+      age: stored.age || null,
+      gender: stored.gender || null
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not fetch personalization data.",
+      details: error.message
+    });
+  }
+});
+
+router.post("/personalization", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: "Missing Bearer access token." });
+  }
+
+  const { age, gender } = req.body;
+  if (typeof age !== "number" || ![18, 25, 35, 45, 55, 65].includes(age)) {
+    return res.status(400).json({ error: "Invalid age." });
+  }
+  if (!["male", "female", "other"].includes(gender)) {
+    return res.status(400).json({ error: "Invalid gender." });
+  }
+
+  try {
+    const profile = await fetchCurrentUserProfile(token);
+    const userId = profile.id;
+    personalizationStore.set(userId, { age, gender });
+
+    return res.status(200).json({
+      saved: true,
+      country: profile.country || null,
+      age,
+      gender
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not save personalization data.",
+      details: error.message
+    });
+  }
+});
+
+router.get("/spotify/audio-features", async (req, res) => {
+  const token = getBearerTokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: "Missing Bearer access token." });
+  }
+
+  const { trackIds } = req.query;
+  if (!trackIds || typeof trackIds !== "string") {
+    return res.status(400).json({ error: "trackIds query param required (comma-separated)." });
+  }
+
+  const ids = trackIds.split(",").filter(id => /^[A-Za-z0-9]{22}$/.test(String(id).trim()));
+  if (ids.length === 0) {
+    return res.status(400).json({ error: "No valid track IDs provided." });
+  }
+
+  try {
+    const featuresById = await getAudioFeaturesByTrackIds(token, ids);
+    return res.status(200).json(featuresById);
+  } catch (error) {
+    return res.status(502).json({
+      error: "Could not fetch audio features.",
+      details: error.message
+    });
+  }
+});
 
 export default router;

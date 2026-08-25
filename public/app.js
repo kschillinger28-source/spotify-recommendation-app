@@ -1245,12 +1245,222 @@ function clearSearchResults(message = "") {
   }
 }
 
-function renderSearchResults(tracks) {
+
+// Audio features cache for current track metadata display
+const audioFeaturesCache = new Map();
+
+async function fetchAudioFeatures(accessToken, trackIds) {
+  if (!trackIds || trackIds.length === 0) return {};
+
+  // Check cache first
+  const uncachedIds = trackIds.filter(id => !audioFeaturesCache.has(id));
+  if (uncachedIds.length === 0) {
+    // All in cache
+    const result = {};
+    trackIds.forEach(id => {
+      if (audioFeaturesCache.has(id)) {
+        result[id] = audioFeaturesCache.get(id);
+      }
+    });
+    return result;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      trackIds: uncachedIds.join(",")
+    });
+    const features = await apiRequest(
+      `/auth/spotify/audio-features?${params.toString()}`,
+      "GET",
+      accessToken
+    );
+
+    // Cache results
+    Object.entries(features).forEach(([trackId, data]) => {
+      audioFeaturesCache.set(trackId, data);
+    });
+
+    // Return all requested (cached + newly fetched)
+    const result = {};
+    trackIds.forEach(id => {
+      if (audioFeaturesCache.has(id)) {
+        result[id] = audioFeaturesCache.get(id);
+      }
+    });
+    return result;
+  } catch (error) {
+    logStatus(`Could not fetch audio features: ${error.message}`);
+    return {};
+  }
+}
+
+function computeBpmMatch(seedTempo, trackTempo) {
+  if (!Number.isFinite(seedTempo) || !Number.isFinite(trackTempo)) {
+    return null;
+  }
+  if (seedTempo <= 0 || trackTempo <= 0) return null;
+
+  // Calculate direct difference and account for half/double tempo
+  const direct = Math.abs(seedTempo - trackTempo);
+  const halfDouble = Math.abs(seedTempo * 0.5 - trackTempo);
+  const doubleHalf = Math.abs(seedTempo * 2 - trackTempo);
+
+  const diff = Math.min(direct, halfDouble, doubleHalf);
+  const percentage = Math.max(0, 100 - (diff / seedTempo) * 100);
+
+  return {
+    seedTempo: Math.round(seedTempo),
+    trackTempo: Math.round(trackTempo),
+    diff: Math.round(diff * 10) / 10,
+    matchPercent: Math.round(percentage),
+    quality: percentage >= 90 ? "high" : percentage >= 75 ? "medium" : "low"
+  };
+}
+
+function computeEnergyLevel(trackEnergy) {
+  if (!Number.isFinite(trackEnergy)) return null;
+  // Spotify energy is 0-1, convert to 1-5 scale
+  const level = Math.ceil(trackEnergy * 5);
+  return {
+    level: Math.max(1, Math.min(5, level)),
+    raw: Math.round(trackEnergy * 100)
+  };
+}
+
+function createMetadataDisplay(seedTrack, resultTrack, audioFeatures) {
+  if (!seedTrack || !resultTrack || !audioFeatures) {
+    return null;
+  }
+
+  const resultId = resultTrack.id;
+  const seedId = seedTrack.id;
+
+  const seedFeatures = audioFeatures[seedId];
+  const resultFeatures = audioFeatures[resultId];
+
+  if (!seedFeatures || !resultFeatures) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  container.className = "result-metadata";
+
+  // BPM Match
+  const bpmMatch = computeBpmMatch(seedFeatures.tempo, resultFeatures.tempo);
+  if (bpmMatch) {
+    const bpmDiv = document.createElement("div");
+    bpmDiv.className = "metadata-metric";
+
+    const label = document.createElement("div");
+    label.className = "metadata-label";
+    label.textContent = "BPM";
+
+    const value = document.createElement("div");
+    value.className = "metadata-value";
+    value.textContent = `${bpmMatch.trackTempo}`;
+
+    const bar = document.createElement("div");
+    bar.className = "metadata-bar";
+
+    const fill = document.createElement("div");
+    fill.className = "metadata-bar-fill";
+    fill.style.width = `${Math.min(100, bpmMatch.matchPercent)}%`;
+
+    bar.appendChild(fill);
+
+    const badge = document.createElement("div");
+    badge.className = `metadata-badge ${bpmMatch.quality === "high" ? "match-high" : ""}`;
+    badge.textContent = `${bpmMatch.matchPercent}%`;
+
+    bpmDiv.appendChild(label);
+    bpmDiv.appendChild(value);
+    bpmDiv.appendChild(bar);
+    bpmDiv.appendChild(badge);
+
+    container.appendChild(bpmDiv);
+  }
+
+  // Energy Level
+  if (Number.isFinite(resultFeatures.energy)) {
+    const energyDiv = document.createElement("div");
+    energyDiv.className = "metadata-metric";
+
+    const label = document.createElement("div");
+    label.className = "metadata-label";
+    label.textContent = "Energy";
+
+    const energy = computeEnergyLevel(resultFeatures.energy);
+    if (energy) {
+      const value = document.createElement("div");
+      value.className = "metadata-value";
+      value.textContent = `${energy.level}/5`;
+
+      const bar = document.createElement("div");
+      bar.className = "metadata-bar";
+
+      const fill = document.createElement("div");
+      fill.className = "metadata-bar-fill";
+      fill.style.width = `${energy.raw}%`;
+
+      bar.appendChild(fill);
+
+      energyDiv.appendChild(label);
+      energyDiv.appendChild(value);
+      energyDiv.appendChild(bar);
+
+      container.appendChild(energyDiv);
+    }
+  }
+
+  // Danceability
+  if (Number.isFinite(resultFeatures.danceability)) {
+    const danceDiv = document.createElement("div");
+    danceDiv.className = "metadata-metric";
+
+    const label = document.createElement("div");
+    label.className = "metadata-label";
+    label.textContent = "Dance";
+
+    const value = document.createElement("div");
+    value.className = "metadata-value";
+    value.textContent = `${Math.round(resultFeatures.danceability * 100)}%`;
+
+    const bar = document.createElement("div");
+    bar.className = "metadata-bar";
+
+    const fill = document.createElement("div");
+    fill.className = "metadata-bar-fill";
+    fill.style.width = `${resultFeatures.danceability * 100}%`;
+
+    bar.appendChild(fill);
+
+    danceDiv.appendChild(label);
+    danceDiv.appendChild(value);
+    danceDiv.appendChild(bar);
+
+    container.appendChild(danceDiv);
+  }
+
+  return container;
+}
+async function renderSearchResults(tracks, seedTrack = null) {
   elements.searchResults.innerHTML = "";
 
   if (!tracks.length) {
     clearSearchResults("No tracks found. Try a different song/artist phrase.");
     return;
+  }
+
+  // Fetch audio features for metadata display if we have a seed track
+  let audioFeatures = {};
+  if (seedTrack) {
+    try {
+      const accessToken = elements.accessToken.value.trim();
+      const trackIds = [seedTrack.id, ...tracks.map(t => t.id)];
+      audioFeatures = await fetchAudioFeatures(accessToken, trackIds);
+    } catch (error) {
+      logStatus(`Could not load audio features for metadata: ${error.message}`);
+    }
   }
 
   tracks.forEach((track) => {
@@ -1267,16 +1477,22 @@ function renderSearchResults(tracks) {
     const album = track.albumName || "Unknown album";
     meta.textContent = `${artists} • ${album} • ${formatDurationMs(track.durationMs)}`;
 
+    card.appendChild(title);
+    card.appendChild(meta);
+
+    // Add metadata display if we have audio features
+    if (seedTrack && Object.keys(audioFeatures).length > 0) {
+      const metadataDisplay = createMetadataDisplay(seedTrack, track, audioFeatures);
+      if (metadataDisplay) {
+        card.appendChild(metadataDisplay);
+      }
+    }
 
     const playNowButton = document.createElement("button");
     playNowButton.type = "button";
     playNowButton.textContent = "Play Now";
     playNowButton.addEventListener("click", async () => {
       setTrackInput(track.uri);
-      // "Start offset" is meant for DJ-transition auto-seek (skipping into a track for
-      // a smooth mix) and persists across sessions. A fresh pick from search has nothing
-      // to do with that — it should always start at 0:00, not whatever offset was last
-      // left over from a prior transition.
       elements.offsetSeconds.value = "0";
       logStatus(`Play-now from search result: ${track.name}.`);
       await handlePlayNowClick(track.uri);
@@ -1306,8 +1522,6 @@ function renderSearchResults(tracks) {
     actions.appendChild(queueButton);
     actions.appendChild(queueSeekButton);
 
-    card.appendChild(title);
-    card.appendChild(meta);
     card.appendChild(actions);
     elements.searchResults.appendChild(card);
   });
@@ -3319,6 +3533,144 @@ async function apiRequest(path, method, accessToken, body, options = {}) {
 
 const universalPlayer = new UniversalPlayer("spotify", apiRequest);
 
+
+// Search filter and pagination UI handlers
+function updateSearchFilterElements() {
+  const filterPopularityEl = document.getElementById("filterPopularity");
+  const filterPopularityValueEl = document.getElementById("filterPopularityValue");
+  const clearFiltersBtn = document.getElementById("clearFiltersButton");
+
+  if (!filterPopularityEl || !clearFiltersBtn) return;
+
+  filterPopularityEl.addEventListener("input", () => {
+    const value = filterPopularityEl.value;
+    filterPopularityValueEl.textContent = value === "0" ? "All" : `${value}+`;
+    currentSearchPage = 1;
+    applySearchFiltersAndPaginate();
+  });
+
+  clearFiltersBtn.addEventListener("click", () => {
+    filterPopularityEl.value = "0";
+    filterPopularityValueEl.textContent = "All";
+    currentSearchPage = 1;
+    applySearchFiltersAndPaginate();
+  });
+}
+
+function getActiveSearchFilters() {
+  const filterPopularityEl = document.getElementById("filterPopularity");
+  const filters = {};
+
+  if (filterPopularityEl && Number(filterPopularityEl.value) > 0) {
+    filters.minPopularity = Number(filterPopularityEl.value);
+  }
+
+  return filters;
+}
+
+function updatePaginationControls(pagination) {
+  const paginationControls = document.getElementById("paginationControls");
+  const paginationInfo = document.getElementById("paginationInfo");
+  const prevBtn = document.getElementById("paginationPrevButton");
+  const nextBtn = document.getElementById("paginationNextButton");
+
+  if (!paginationControls || !pagination) return;
+
+  if (pagination.totalResults <= RESULTS_PER_PAGE) {
+    paginationControls.style.display = "none";
+    return;
+  }
+
+  paginationControls.style.display = "flex";
+  paginationInfo.textContent = `Page ${pagination.currentPage} of ${pagination.totalPages}`;
+
+  if (prevBtn) {
+    prevBtn.disabled = pagination.currentPage <= 1;
+    prevBtn.onclick = () => {
+      if (pagination.currentPage > 1) {
+        currentSearchPage = pagination.currentPage - 1;
+        applySearchFiltersAndPaginate();
+      }
+    };
+  }
+
+  if (nextBtn) {
+    nextBtn.disabled = pagination.currentPage >= pagination.totalPages;
+    nextBtn.onclick = () => {
+      if (pagination.currentPage < pagination.totalPages) {
+        currentSearchPage = pagination.currentPage + 1;
+        applySearchFiltersAndPaginate();
+      }
+    };
+  }
+}
+
+function updateSearchResultCount(count) {
+  const resultCountEl = document.getElementById("searchResultCount");
+  if (resultCountEl) {
+    const plural = count === 1 ? "track" : "tracks";
+    resultCountEl.textContent = `${count} ${plural}`;
+  }
+}
+
+let lastSearchQuery = "";
+let lastSearchFilters = {};
+let lastSearchResults = [];
+
+async function applySearchFiltersAndPaginate() {
+  const query = elements.trackSearchQuery.value.trim();
+  if (!query) return;
+
+  const filters = getActiveSearchFilters();
+  const cacheKey = getCacheKey(query, filters);
+
+  // Get cached results or use last search
+  let filteredResults = null;
+  if (lastSearchQuery === query && JSON.stringify(lastSearchFilters) === JSON.stringify(filters)) {
+    filteredResults = lastSearchResults;
+  } else {
+    const cached = getSearchResultsFromCache(query, filters);
+    if (cached) {
+      filteredResults = cached;
+    } else if (lastSearchQuery === query) {
+      // Apply filters to last results
+      filteredResults = getFilteredResults(lastSearchResults, filters);
+      cacheSearchResults(query, filters, filteredResults);
+    }
+  }
+
+  if (!filteredResults) return;
+
+  lastSearchQuery = query;
+  lastSearchFilters = filters;
+  lastSearchResults = filteredResults;
+
+  updateSearchResultCount(filteredResults.length);
+
+  const pagination = getPaginatedResults(filteredResults, currentSearchPage);
+  
+  // Fetch seed track for metadata
+  let seedTrack = null;
+  try {
+    const accessToken = elements.accessToken.value.trim();
+    const playbackState = await getPlaybackState(accessToken, { cacheTtlMs: 5000 });
+    const currentTrackData = playbackState?.playback?.item;
+    if (currentTrackData) {
+      seedTrack = {
+        id: currentTrackData.id,
+        name: currentTrackData.name,
+        artistNames: (currentTrackData.artists ?? []).map(a => a.name),
+        uri: currentTrackData.uri,
+        durationMs: currentTrackData.duration_ms
+      };
+    }
+  } catch (err) {
+    // Silent fail
+  }
+
+  await renderSearchResults(pagination.results, seedTrack);
+  updatePaginationControls(pagination);
+}
 function scheduleAutoSearch() {
   if (searchDebounceTimerId !== null) {
     window.clearTimeout(searchDebounceTimerId);
@@ -3354,9 +3706,81 @@ function scheduleAutoSearch() {
 
   searchDebounceTimerId = window.setTimeout(() => {
     searchTracks({ source: "auto" });
-  }, 350);
+  }, SEARCH_DEBOUNCE_MS);
 }
 
+
+// Search debouncing and caching for pagination feature
+let searchDebounceTimer = null;
+const SEARCH_DEBOUNCE_MS = 500;
+const searchResultsCache = new Map();
+let currentSearchPage = 1;
+const RESULTS_PER_PAGE = 20;
+
+function clearSearchDebounceTimer() {
+  if (searchDebounceTimer !== null) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+}
+
+function getCacheKey(query, filters = {}) {
+  return JSON.stringify({ query: query.toLowerCase(), filters });
+}
+
+function cacheSearchResults(query, filters, results) {
+  const key = getCacheKey(query, filters);
+  searchResultsCache.set(key, {
+    results,
+    cachedAtMs: Date.now()
+  });
+  // Keep cache size under 50 entries
+  if (searchResultsCache.size > 50) {
+    const firstKey = searchResultsCache.keys().next().value;
+    searchResultsCache.delete(firstKey);
+  }
+}
+
+function getSearchResultsFromCache(query, filters) {
+  const key = getCacheKey(query, filters);
+  const cached = searchResultsCache.get(key);
+  if (cached) {
+    return cached.results;
+  }
+  return null;
+}
+
+function clearSearchCache() {
+  searchResultsCache.clear();
+}
+
+function getFilteredResults(allResults, filters = {}) {
+  if (!filters || Object.keys(filters).length === 0) {
+    return allResults;
+  }
+
+  return allResults.filter(track => {
+    // Popularity filter
+    if (filters.minPopularity !== undefined && filters.minPopularity !== null) {
+      const trackPopularity = Number(track.popularity || 0);
+      if (trackPopularity < filters.minPopularity) return false;
+    }
+
+    // More filters can be added here when audio features are pre-fetched
+    return true;
+  });
+}
+
+function getPaginatedResults(allResults, page = 1) {
+  const startIdx = (page - 1) * RESULTS_PER_PAGE;
+  const endIdx = startIdx + RESULTS_PER_PAGE;
+  return {
+    results: allResults.slice(startIdx, endIdx),
+    totalResults: allResults.length,
+    totalPages: Math.ceil(allResults.length / RESULTS_PER_PAGE),
+    currentPage: page
+  };
+}
 async function searchTracks({ source = "manual" } = {}) {
   if (searchInFlight) {
     pendingSearchAfterInFlight = true;
@@ -3414,7 +3838,7 @@ async function searchTracks({ source = "manual" } = {}) {
   try {
     const params = new URLSearchParams({
       q: query,
-      limit: "10"
+      limit: "20"
     });
     const payload = await apiRequest(
       `/auth/spotify/search/tracks?${params.toString()}`,
@@ -3422,7 +3846,34 @@ async function searchTracks({ source = "manual" } = {}) {
       accessToken
     );
 
-    renderSearchResults(payload?.tracks ?? []);
+    // Get current track for metadata display
+    let seedTrack = null;
+    try {
+      const playbackState = await getPlaybackState(accessToken, { cacheTtlMs: 5000 });
+      const currentTrackData = playbackState?.playback?.item;
+      if (currentTrackData) {
+        seedTrack = {
+          id: currentTrackData.id,
+          name: currentTrackData.name,
+          artistNames: (currentTrackData.artists ?? []).map(a => a.name),
+          uri: currentTrackData.uri,
+          durationMs: currentTrackData.duration_ms
+        };
+      }
+    } catch (err) {
+      // Silent fail - metadata is optional
+    }
+    await renderSearchResults(payload?.tracks ?? [], seedTrack);
+    
+    // Cache results for filter/pagination
+    lastSearchQuery = query;
+    lastSearchResults = payload?.tracks ?? [];
+    lastSearchFilters = {};
+    currentSearchPage = 1;
+    cacheSearchResults(query, {}, lastSearchResults);
+    updateSearchResultCount(lastSearchResults.length);
+    updatePaginationControls(getPaginatedResults(lastSearchResults, 1));
+    
     setSearchInlineStatus(
       `Found ${payload?.tracks?.length ?? 0} track(s).`,
       "success"
@@ -4527,6 +4978,9 @@ function bindEvents() {
   elements.searchTracksButton.addEventListener("click", () =>
     searchTracks({ source: "manual" })
   );
+
+  // Initialize search filters and pagination UI
+  updateSearchFilterElements();
   elements.contextMoodLevel.addEventListener("input", () => {
     updateEnvironmentContextBar();
     saveInputsToLocalStorage();
