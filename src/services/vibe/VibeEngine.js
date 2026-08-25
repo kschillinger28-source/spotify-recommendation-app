@@ -11,6 +11,8 @@ import {
   getUserTopTracks
 } from "../../utils/spotify.js";
 import { embeddingSimilarity01, getTrackEmbedding, getTrackEmbeddings } from "./audioSimilarity.js";
+import { computeEnergyArcScore, energyArcBreakdown } from "./energyArcPlanning.js";
+import { computeMoodContinuityScore, moodSpaceBreakdown } from "./moodSpaceContinuity.js";
 
 // How many top candidates (by cheap feature-based score) get the expensive
 // audio-embedding similarity pass. Keeps latency bounded — embeddings are cached
@@ -546,6 +548,34 @@ function inferSeedGenreToken(raw) {
 // penalizing, when tags are thin). When the artist has no usable genre tags — common
 // for genre-blending/indie artists — this returns an empty array, and the discovery
 // call below simply omits seed_genres and leans on the track/artist seeds instead.
+// IMPROVED (v2): Rotate seed artists for cold-start diversity
+// Cycles through top artist list to provide varied recommendations on repeated calls
+function rotateSeedArtists(seedArtistRotation, availableArtists) {
+  if (!seedArtistRotation || !availableArtists || availableArtists.length === 0) {
+    return availableArtists.slice(0, 2);
+  }
+
+  // On first call or if artists list changed, initialize
+  if (seedArtistRotation.topArtists.length === 0 || 
+      JSON.stringify(seedArtistRotation.topArtists) !== JSON.stringify(availableArtists.slice(0, 10))) {
+    seedArtistRotation.topArtists = availableArtists.slice(0, 10);
+    seedArtistRotation.rotationIndex = 0;
+    seedArtistRotation.rotationCounter = 0;
+  }
+
+  // Increment counter and check if rotation needed
+  seedArtistRotation.rotationCounter += 1;
+  if (seedArtistRotation.rotationCounter >= seedArtistRotation.rotationInterval) {
+    seedArtistRotation.rotationCounter = 0;
+    seedArtistRotation.rotationIndex = (seedArtistRotation.rotationIndex + 2) % seedArtistRotation.topArtists.length;
+  }
+
+  // Return pair of artists from rotated position
+  const idx1 = seedArtistRotation.rotationIndex;
+  const idx2 = (seedArtistRotation.rotationIndex + 1) % seedArtistRotation.topArtists.length;
+  return [seedArtistRotation.topArtists[idx1], seedArtistRotation.topArtists[idx2]].filter(Boolean);
+}
+
 function buildCoherentGenreSeeds(artistGenreList, sessionId) {
   const out = [];
   for (const g of artistGenreList ?? []) {
@@ -570,7 +600,8 @@ async function fetchDiscoveryRecommendationGrid(
     currentTempo,
     currentReleaseYear,
     nostalgiaSlider,
-    currentFeatures
+    currentFeatures,
+    seedArtistRotation
   }
 ) {
   const tempoSync =
@@ -582,7 +613,11 @@ async function fetchDiscoveryRecommendationGrid(
       }
     : {};
 
-  const artists = seedArtistIds.filter(Boolean).slice(0, 2);
+  // IMPROVED (v2): Use rotated seed artists for cold-start discovery
+  const rotatedArtists = seedArtistRotation 
+    ? rotateSeedArtists(seedArtistRotation, seedArtistIds)
+    : seedArtistIds;
+  const artists = rotatedArtists.filter(Boolean).slice(0, 2);
   // No fabricated fallback here either — an empty seedGenres just means the
   // /recommendations call below leans on seedTrackIds/seedArtistIds instead,
   // which is always safe since we always have at least a current-track seed.
@@ -1011,6 +1046,13 @@ function scoreCandidate(candidate, context) {
       : null;
   const moodFit = valenceGap === null ? 1 : Math.max(-6, 9 - valenceGap * 20);
 
+  // IMPROVED (v2): Added danceability score for groove continuity
+  const danceabilityGap =
+    Number.isFinite(currentTrack.danceability) && Number.isFinite(candidate.danceability)
+      ? Math.abs(currentTrack.danceability - candidate.danceability)
+      : null;
+  const danceabilityFit = danceabilityGap === null ? 0 : Math.max(-3, 8 - danceabilityGap * 16);
+
   const loudnessGap =
     Number.isFinite(currentTrack.loudness) && Number.isFinite(candidate.loudness)
       ? Math.abs(currentTrack.loudness - candidate.loudness)
@@ -1089,12 +1131,17 @@ function scoreCandidate(candidate, context) {
         ? -4.5
         : 2.2;
 
+  // TIER 2 Improvements: Energy Arc Planning & 2D Mood Space Continuity
+  const energyArcScore = round1(computeEnergyArcScore(candidate, currentTrack, context.sessionTrackIndex ?? 0));
+  const moodContinuityScore = round1(computeMoodContinuityScore(candidate, currentTrack));
+
   const musicalScoreRaw = round1(
     30 +
       embeddingFit +
       genreFit +
       keyFit +
       moodFit +
+      danceabilityFit +
       bpmFit +
       energyFit +
       acousticFit +
@@ -1107,7 +1154,9 @@ function scoreCandidate(candidate, context) {
       explicitFit +
       sourceFit +
       affinityBoost +
-      discoveryNovelty -
+      discoveryNovelty +
+      energyArcScore +
+      moodContinuityScore -
       repeatPenalty * -1 -
       surfaceRepeatPenalty -
       trackPenalty -
@@ -1175,6 +1224,7 @@ function scoreCandidate(candidate, context) {
       genreSimilarity: genreSimilarity === null ? null : round1(genreSimilarity),
       keyFit: round1(keyFit),
       moodFit: round1(moodFit),
+      danceabilityFit: round1(danceabilityFit),
       productionFit: round1(productionFit),
       vocalContinuityFit: round1(vocalContinuityFit),
       bpmFit: round1(bpmFit),
@@ -1196,6 +1246,8 @@ function scoreCandidate(candidate, context) {
       repetitionHistoryPenalty: round1(-repetitionHistoryPenalty),
       surfaceRepeatPenalty: round1(-surfaceRepeatPenalty),
       discoveryNovelty: round1(discoveryNovelty),
+      energyArcScore: round1(energyArcScore),
+      moodContinuityScore: round1(moodContinuityScore),
       contextualAdjustment: round1(contextSignals.contextualAdjustment),
       contextSignalBreakdown: contextSignals.contextSignalBreakdown
     },
@@ -1232,7 +1284,7 @@ function computeFlowScore(anchor, candidate, usedArtistIds) {
   // reward candidates whose timbral/harmonic "musical DNA" continues the anchor's.
   const embeddingFlowScore =
     anchor.embedding && candidate.embedding
-      ? embeddingSimilarity01(anchor.embedding, candidate.embedding) * 20
+      ? ((embeddingSimilarity01(anchor.embedding, candidate.embedding)?.similarity) ?? 0) * 20
       : 0;
 
   return round1(
@@ -1275,10 +1327,11 @@ async function rankCandidatesWithEmbeddings(
 
   const rescored = shortlist.map((candidate) => {
     const candidateEmbedding = embeddingsById[candidate.id] ?? null;
-    const similarity = embeddingSimilarity01(currentEmbedding, candidateEmbedding);
+    const embeddingResult = embeddingSimilarity01(currentEmbedding, candidateEmbedding);
     const withEmbedding = {
       ...candidate,
-      embeddingSimilarity: similarity,
+      embeddingSimilarity: embeddingResult?.similarity ?? null,
+      embeddingBreakdown: embeddingResult?.breakdown ?? null,
       embedding: attachEmbeddingVectors ? candidateEmbedding : undefined
     };
     return { ...withEmbedding, ...scoreCandidate(withEmbedding, scoringContextBase) };
