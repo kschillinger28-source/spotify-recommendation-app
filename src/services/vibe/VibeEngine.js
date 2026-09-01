@@ -13,6 +13,7 @@ import {
 import { embeddingSimilarity01, getTrackEmbedding, getTrackEmbeddings } from "./audioSimilarity.js";
 import { computeEnergyArcScore, energyArcBreakdown } from "./energyArcPlanning.js";
 import { computeMoodContinuityScore, moodSpaceBreakdown } from "./moodSpaceContinuity.js";
+import { computeTransitionCompatibility } from "./transitionCompatibility.js";
 
 // How many top candidates (by cheap feature-based score) get the expensive
 // audio-embedding similarity pass. Keeps latency bounded — embeddings are cached
@@ -1135,6 +1136,15 @@ function scoreCandidate(candidate, context) {
   const energyArcScore = round1(computeEnergyArcScore(candidate, currentTrack, context.sessionTrackIndex ?? 0));
   const moodContinuityScore = round1(computeMoodContinuityScore(candidate, currentTrack));
 
+  // TIER 3: DJ-style Transition Compatibility
+  // Scores immediate next-song suitability (not just general similarity)
+  // Penalizes genre jumps and abrupt feature changes
+  const transitionCompat = computeTransitionCompatibility(currentTrack, candidate);
+  const transitionCompatScore = round1((transitionCompat.score - 0.5) * 20); // Scale to [-10, 10]
+
+  // Store breakdown for debugging (non-scoring)
+  candidate._transitionDebug = transitionCompat.breakdown;
+
   const musicalScoreRaw = round1(
     30 +
       embeddingFit +
@@ -1156,7 +1166,8 @@ function scoreCandidate(candidate, context) {
       affinityBoost +
       discoveryNovelty +
       energyArcScore +
-      moodContinuityScore -
+      moodContinuityScore +
+      transitionCompatScore -
       repeatPenalty * -1 -
       surfaceRepeatPenalty -
       trackPenalty -
