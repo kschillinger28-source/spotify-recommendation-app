@@ -14,3 +14,14 @@ yarn-error.log*
 .claude-flow/data/
 .claude-flow/logs/
 .claude-flow/sessions/
+
+# Local vector store (regenerated at runtime)
+ruvector.db
+ruvector.db-shm
+ruvector.db-wal
+
+# Pre-edit file snapshots — git history is the real backup
+*.bak
+*.backup
+*.original
+*.backup.js
