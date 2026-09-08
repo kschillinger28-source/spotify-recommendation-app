@@ -1,6 +1,14 @@
 import dotenv from "dotenv";
 
+// Store PORT from environment before dotenv loads (allows override)
+const envPort = process.env.PORT;
+
 dotenv.config({ override: true });
+
+// Restore PORT from environment if it was set (environment takes priority)
+if (envPort) {
+  process.env.PORT = envPort;
+}
 
 const requiredKeys = [
   "APP_BASE_URL",
