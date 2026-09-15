@@ -71,7 +71,14 @@ export default class SessionStateStore {
           termWeights: {},
           artistTermWeights: {}
         },
-        recentSuggestedUris: []
+        recentSuggestedUris: [],
+        // IMPROVED (v2): Added seed artist rotation for cold-start discovery diversity
+        seedArtistRotation: {
+          topArtists: [],
+          rotationIndex: 0,
+          rotationCounter: 0,
+          rotationInterval: 3  // Rotate every 3 recommendations
+        }
       });
     }
 

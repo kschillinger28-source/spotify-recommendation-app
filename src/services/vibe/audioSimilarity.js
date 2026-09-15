@@ -118,27 +118,47 @@ function cosineSimilarity(a, b) {
 
 /**
  * Blends chroma + timbre cosine similarity into a single 0..1 "musical DNA" match.
- * Timbre (tone/production/instrumentation fingerprint) is weighted above raw chroma,
- * since harmonic/key compatibility is already scored separately via the Camelot wheel.
- * Returns null when either embedding is unavailable (caller should treat as "unknown", not "bad").
+ * 
+ * IMPROVED (v2): Changed pitch/timbre weighting from 40/60 to 50/50 for better balance.
+ * Timbre and pitch are now equally weighted, reflecting that both harmonic content
+ * and production/tone are equally important for audio similarity (harmonic/key 
+ * compatibility is already scored separately via the Camelot wheel).
+ * 
+ * Returns { similarity, breakdown } where breakdown includes pitch, timbre, and combined scores
+ * for transparency in recommendation rationale.
  */
 export function embeddingSimilarity01(embeddingA, embeddingB) {
   if (!embeddingA || !embeddingB) {
-    return null;
+    return { similarity: null, breakdown: null };
   }
   const pitchSim = cosineSimilarity(embeddingA.pitchVector, embeddingB.pitchVector);
   const timbreSim = cosineSimilarity(embeddingA.timbreVector, embeddingB.timbreVector);
   const parts = [];
   if (pitchSim !== null) {
-    parts.push([pitchSim, 0.4]);
+    parts.push([pitchSim, 0.5]); // Changed from 0.4 to 0.5
   }
   if (timbreSim !== null) {
-    parts.push([timbreSim, 0.6]);
+    parts.push([timbreSim, 0.5]); // Changed from 0.6 to 0.5
   }
   if (parts.length === 0) {
-    return null;
+    return { similarity: null, breakdown: null };
   }
   const totalWeight = parts.reduce((sum, [, weight]) => sum + weight, 0);
   const blended = parts.reduce((sum, [sim, weight]) => sum + sim * weight, 0) / totalWeight;
-  return Math.min(1, Math.max(0, (blended + 1) / 2));
+  const similarity = Math.min(1, Math.max(0, (blended + 1) / 2));
+  
+  // Breakdown for transparency: show pitch, timbre, and combined
+  const pitchValue = pitchSim !== null ? Math.min(1, Math.max(0, (pitchSim + 1) / 2)) : null;
+  const timbreValue = timbreSim !== null ? Math.min(1, Math.max(0, (timbreSim + 1) / 2)) : null;
+  
+  const breakdown = {
+    pitch: pitchValue,
+    timbre: timbreValue,
+    combined: similarity,
+    explanation: pitchValue !== null && timbreValue !== null 
+      ? `Pitch: ${Math.round(pitchValue * 100)}%, Timbre: ${Math.round(timbreValue * 100)}%`
+      : "Partial audio data available"
+  };
+
+  return { similarity, breakdown };
 }
