@@ -1,0 +1,231 @@
+{
+  "project_title": "The Vibe - Smart Music Recommendation Engine Landing Page",
+  "design_concept": "Atmospheric, dark, liquid-gradient music tech platform showcasing an interactive Mood Orb on a 2D Valence-Energy map",
+  "tech_stack": {
+    "framework": "React.js",
+    "styling": "Tailwind CSS + Custom CSS Variables",
+    "animation": "Framer Motion + Canvas 2D Engine",
+    "components": "Shadcn/UI primitives heavily customized with dark neon aesthetic",
+    "icons": "Lucide React / Phosphor Icons"
+  },
+  "color_system": {
+    "base_theme": "Dark Obsidian & Liquid Velvet",
+    "background_base": "#0B0B10",
+    "background_card": "#12121A",
+    "background_elevated": "#1A1A26",
+    "text_primary": "#F4F4F8",
+    "text_secondary": "#9494A8",
+    "text_muted": "#5C5C70",
+    "border_subtle": "rgba(255, 255, 255, 0.08)",
+    "border_focus": "rgba(255, 255, 255, 0.25)",
+    "mood_palettes": {
+      "Focus": {
+        "label": "Focus",
+        "valence": 0.2,
+        "energy": 0.3,
+        "primary_glow": "#2DD4BF",
+        "secondary_glow": "#0284C7",
+        "ambient_gradient": "radial-gradient(circle at %x% %y%, rgba(45, 212, 191, 0.35) 0%, rgba(2, 132, 199, 0.15) 45%, rgba(11, 11, 16, 0.98) 80%)",
+        "waveform_color": "#2DD4BF",
+        "vibe_description": "Deep flow, minimalist ambient textures, binaural precision",
+        "sample_track": {
+          "title": "Synaptic Drift",
+          "artist": "Komorebi Lab",
+          "bpm": "86 BPM",
+          "key": "A Minor"
+        }
+      },
+      "Hype": {
+        "label": "Hype",
+        "valence": 0.85,
+        "energy": 0.95,
+        "primary_glow": "#FF2A6D",
+        "secondary_glow": "#FF758C",
+        "ambient_gradient": "radial-gradient(circle at %x% %y%, rgba(255, 42, 109, 0.4) 0%, rgba(255, 117, 140, 0.2) 45%, rgba(11, 11, 16, 0.98) 80%)",
+        "waveform_color": "#FF2A6D",
+        "vibe_description": "High-octane basslines, kinetic percussion, raw energy spikes",
+        "sample_track": {
+          "title": "Neon Overdrive",
+          "artist": "Vektroid X",
+          "bpm": "142 BPM",
+          "key": "F# Major"
+        }
+      },
+      "Chill": {
+        "label": "Chill",
+        "valence": 0.65,
+        "energy": 0.2,
+        "primary_glow": "#A855F7",
+        "secondary_glow": "#3B82F6",
+        "ambient_gradient": "radial-gradient(circle at %x% %y%, rgba(168, 85, 247, 0.35) 0%, rgba(59, 130, 246, 0.18) 45%, rgba(11, 11, 16, 0.98) 80%)",
+        "waveform_color": "#A855F7",
+        "vibe_description": "Warm electric pianos, lo-fi vinyl warmth, slow sub-bass drift",
+        "sample_track": {
+          "title": "Sunset Velvet",
+          "artist": "Aura Frequency",
+          "bpm": "74 BPM",
+          "key": "Db Major"
+        }
+      },
+      "Melancholy": {
+        "label": "Melancholy",
+        "valence": 0.1,
+        "energy": 0.15,
+        "primary_glow": "#6366F1",
+        "secondary_glow": "#1E1B4B",
+        "ambient_gradient": "radial-gradient(circle at %x% %y%, rgba(99, 102, 241, 0.35) 0%, rgba(30, 27, 75, 0.25) 50%, rgba(11, 11, 16, 0.98) 85%)",
+        "waveform_color": "#818CF8",
+        "vibe_description": "Reverberated solo piano, minor chord pads, haunting atmospheric hum",
+        "sample_track": {
+          "title": "Echoes in Rain",
+          "artist": "Noir Strings",
+          "bpm": "60 BPM",
+          "key": "C Minor"
+        }
+      },
+      "Euphoric": {
+        "label": "Euphoric",
+        "valence": 0.95,
+        "energy": 0.75,
+        "primary_glow": "#F59E0B",
+        "secondary_glow": "#EC4899",
+        "ambient_gradient": "radial-gradient(circle at %x% %y%, rgba(245, 158, 11, 0.38) 0%, rgba(236, 72, 153, 0.22) 45%, rgba(11, 11, 16, 0.98) 80%)",
+        "waveform_color": "#FBBF24",
+        "vibe_description": "Uplifting synth arpeggios, sun-drenched vocal swells, climax hooks",
+        "sample_track": {
+          "title": "Solar Horizon",
+          "artist": "Lumina",
+          "bpm": "128 BPM",
+          "key": "G Major"
+        }
+      },
+      "Late Night": {
+        "label": "Late Night",
+        "valence": 0.4,
+        "energy": 0.5,
+        "primary_glow": "#10B981",
+        "secondary_glow": "#064E3B",
+        "ambient_gradient": "radial-gradient(circle at %x% %y%, rgba(16, 185, 129, 0.32) 0%, rgba(6, 78, 59, 0.2) 50%, rgba(11, 11, 16, 0.98) 85%)",
+        "waveform_color": "#34D399",
+        "vibe_description": "Deep house grooves, dark club intimacy, hypnotizing syncopation",
+        "sample_track": {
+          "title": "3AM Transmissions",
+          "artist": "Sub-Zero Audio",
+          "bpm": "122 BPM",
+          "key": "E Minor"
+        }
+      }
+    }
+  },
+  "typography": {
+    "font_pairing": "Swiss Cyber-Editorial (Cabinet Grotesk / Syne for Display + Plus Jakarta Sans for Body + JetBrains Mono for UI labels)",
+    "display_font": "'Syne', 'Cabinet Grotesk', sans-serif",
+    "body_font": "'Plus Jakarta Sans', sans-serif",
+    "mono_font": "'JetBrains Mono', monospace",
+    "hierarchy": {
+      "hero_title": "text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.05]",
+      "section_title": "text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight",
+      "card_title": "text-xl sm:text-2xl font-semibold tracking-normal",
+      "eyebrow": "text-xs sm:text-sm font-mono uppercase tracking-[0.25em] text-cyan-400/90",
+      "body_lead": "text-lg sm:text-xl text-neutral-300 font-normal leading-relaxed",
+      "body_regular": "text-base text-neutral-400 font-normal leading-relaxed"
+    }
+  },
+  "hero_composition_rules": {
+    "structure": "Asymmetric overlay system where headline and interaction coexist cleanly",
+    "coexistence_protocol": {
+      "pointer_events_rule": "The orb canvas container MUST have pointer-events-none overall. ONLY the draggable orb element itself receives pointer-events-auto. Hero buttons, text, and header links remain 100% clickable and unblocked.",
+      "layout_split": "On desktop: Left column (col-span-7) holds Hero Headline, Eyebrow, CTAs, and algorithm stats. Right column (col-span-5) hosts the hero orb canvas backdrop and live valence map preview.",
+      "z_index_hierarchy": {
+        "hero_background_gradient": "z-0",
+        "waveform_canvas": "z-10",
+        "orb_draggable_handle": "z-20",
+        "hero_content_and_cta": "z-30",
+        "sticky_nav_header": "z-50"
+      }
+    }
+  },
+  "playground_section": {
+    "section_id": "the-vibe-playground",
+    "section_title": "The Vibe Playground",
+    "subtitle": "Drag the Orb across 2D Valence and Energy spectrums to shape your sonic reality in real-time.",
+    "layout": {
+      "canvas_dimensions": "h-[540px] md:h-[640px] rounded-3xl border border-white/10 relative overflow-hidden bg-black/40 backdrop-blur-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)]",
+      "zone_grid": "2 rows x 3 columns map representation. X-axis = Valence (Unpleasant -> Pleasant), Y-axis = Energy (Relaxed -> Intense)",
+      "zones": [
+        {"name": "Focus", "x_range": [0, 0.33], "y_range": [0.5, 1.0], "color": "#2DD4BF"},
+        {"name": "Hype", "x_range": [0.66, 1.0], "y_range": [0.5, 1.0], "color": "#FF2A6D"},
+        {"name": "Euphoric", "x_range": [0.66, 1.0], "y_range": [0, 0.5], "color": "#F59E0B"},
+        {"name": "Chill", "x_range": [0.33, 0.66], "y_range": [0, 0.5], "color": "#A855F7"},
+        {"name": "Melancholy", "x_range": [0, 0.33], "y_range": [0, 0.5], "color": "#6366F1"},
+        {"name": "Late Night", "x_range": [0.33, 0.66], "y_range": [0.5, 1.0], "color": "#10B981"}
+      ]
+    },
+    "interactive_elements": {
+      "mood_orb": "Gradiated 80px sphere with outer diffuse glow (blur 24px) that shifts color continuously based on nearest zone center interpolation",
+      "now_playing_chip": "Floating glassmorphism pill showing current track, artist, BPM, key, and a mini reactive equalizer visualizer",
+      "zone_snap_lock": "Double-clicking or dropping inside a zone snaps orb gently with spring motion, locking the gradient & triggering a track switch animation",
+      "waveform_line": "Interactive SVG / HTML Canvas line that runs horizontally across the playground floor, adjusting frequency (Energy) and amplitude curve smooth (Valence)"
+    }
+  },
+  "waveform_treatment": {
+    "canvas_type": "2D Canvas / WebGL fallback",
+    "rendering": "Sine wave series with perlin noise modulation",
+    "energy_mapping": "Higher Energy = higher frequency (more rapid wave oscillations) + faster horizontal scroll speed",
+    "valence_mapping": "Higher Valence = smoother, harmonic peaks; Lower Valence = erratic, jagged, saw-like noise spikes"
+  },
+  "glow_and_light_language": {
+    "style": "Volumetric neon light bleed on ultra-dark matte surface",
+    "glassmorphism": "bg-white/[0.03] backdrop-blur-2xl border border-white/[0.08] shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]",
+    "orb_light": "Multi-layer radial gradients with drop-shadow(0 0 35px var(--glow-color))",
+    "cursor_trail": "Subtle particle dust lingering behind the orb when dragged quickly"
+  },
+  "mobile_simplification_rules": {
+    "touch_interactions": "Full touch gesture drag support with Framer Motion dragConstraints and dragElastic={0.15}",
+    "mobile_canvas_optimization": "Reduce particle count by 50% and reduce canvas resolution DPR to 1.0 on screens < 768px for 60fps performance",
+    "fallback_tap_zones": "Show 6 explicit pill buttons above/below map on mobile so users can tap a mood directly if dragging is awkward",
+    "layout_stacking": "Stack map and track detail vertical on small screens without losing visual fidelity"
+  },
+  "accessibility_and_keyboard": {
+    "keyboard_controls": "Focusable orb handle via Tab key; Arrow keys move orb by 5% step; Keys 1-6 snap directly to Focus (1), Hype (2), Chill (3), Melancholy (4), Euphoric (5), Late Night (6)",
+    "screen_reader": "aria-valuenow for Valence and Energy; live aria-live region announcing mood label and track changes",
+    "prefers_reduced_motion": "Disable continuous idle float and smooth snap orb without bouncy springs when reduced motion is requested"
+  },
+  "component_hierarchy": [
+    "Navbar (Sticky glass header with brand logo, Vibe Playground jump button, and CTA)",
+    "HeroSection (Headline, value proposition, algorithm pill, mini interactive Mood Orb preview)",
+    "VibePlaygroundSection (#the-vibe-playground canvas, 6 mood zones, draggable orb, dynamic track chip, audio waveform)",
+    "AlgorithmComparison (Why static 20-song rotation fails vs context-aware Vibe vector matching)",
+    "FeatureBentoGrid (Tetris layout showcasing Real-time Biometrics, Context Sensing, Seamless DAW Export, Collaborative Vibes)",
+    "InteractiveAudioPreview (Curated track stems browser with interactive mood tag filters)",
+    "TestimonialsAndMetrics (99.4% vibe accuracy, 4.2M tracks indexed, real producer quotes)",
+    "CTASection (Join the Vibe Private Beta waitlist with animated pulse CTA input)",
+    "Footer (Navigation links, social links, system status indicator)"
+  ],
+  "image_urls": {
+    "listener_dark_neon_1": "https://images.unsplash.com/photo-1762274673430-f6ca404104d1?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "listener_dark_neon_2": "https://images.unsplash.com/photo-1777146536285-e70e21c953eb?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "listener_dark_neon_3": "https://images.unsplash.com/photo-1787875230358-177453c963ba?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "cyberpunk_vibes": "https://images.unsplash.com/photo-1580428180098-24b353d7e9d9?crop=entropy&cs=srgb&fm=jpg&q=85"
+  },
+  "data_testid_rules": {
+    "hero_orb": "data-testid='hero-mood-orb'",
+    "playground_orb": "data-testid='playground-mood-orb'",
+    "playground_section": "data-testid='the-vibe-playground'",
+    "now_playing_chip": "data-testid='now-playing-chip'",
+    "mood_zone_button": "data-testid='mood-zone-zoneName'",
+    "waveform_canvas": "data-testid='waveform-canvas'",
+    "waitlist_input": "data-testid='waitlist-email-input'",
+    "waitlist_submit": "data-testid='waitlist-submit-button'"
+  },
+  "instructions_to_main_agent": [
+    "Implement the landing page in React JS using Tailwind CSS and Framer Motion.",
+    "Ensure section id='the-vibe-playground' exists directly after the hero section as requested.",
+    "Make sure the hero orb and playground orb are draggable on both desktop mouse and mobile touch.",
+    "Ensure the hero orb container uses pointer-events-none with pointer-events-auto ONLY on the orb itself so hero text buttons remain 100% clickable.",
+    "Interpolate colors smoothly between the 6 mood zones based on Euclidean distance to zone centers.",
+    "Add test IDs (`data-testid`) to all interactive elements as outlined in data_testid_rules.",
+    "Do NOT import Inter or Roboto for headers or display text. Use Cabinet Grotesk / Syne or high-character sans.",
+    "Ensure dark background (#0B0B10) with vibrant glowing accents."
+  ]
+}
