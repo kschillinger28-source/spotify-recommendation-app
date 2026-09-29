@@ -31,6 +31,11 @@ Add one creative, non-destructive interactive feature — "The Vibe" — to a mu
 ## Implemented (2026-09-29)
 - All of the above; verified via curl (root, valid/invalid lock, summary) and screenshots (desktop 1440 hero + playground + zone-lock flow with chip; mobile 390 hero + playground; no horizontal overflow)
 
+## Claude AI integration (2026-09-29)
+- `POST /api/ai/ask-the-vibe`: SSE streaming via emergentintegrations `LlmChat` + Anthropic `claude-sonnet-4-6` on the Emergent universal key (`EMERGENT_LLM_KEY` in backend/.env, never in client code). System prompt forces `MOOD: <label>` first line + ≤2-sentence reason; asks persist to `vibe_asks` (moment, hour, mood, reply)
+- Frontend `AskTheVibe.jsx` (inside TheVibe folder, playground only): glass ask bar top-center of canvas; streams Claude's reply token-by-token into a glass bubble; parses the MOOD line mid-stream and glides/locks the orb to that mood; graceful "Signal lost" state (verified) when AI is unavailable
+- Verified: one full streamed reply end-to-end (curl + Mongo persist + format). BLOCKER: the universal key budget ran out mid-testing (`Budget has been exceeded! ... Max budget: 0.001`) — user must add balance (Profile → Manage plan → Universal Key → Add Balance, or enable auto top-up); code is done and was proven on the one call that ran
+
 ## Backlog
 - P0: none outstanding
 - P1: real 30s audio previews behind licensing decision; vibe-locks dashboard for the algorithm story; shareable mood card

@@ -24,6 +24,7 @@ import { Volume2, VolumeX } from "lucide-react";
 import { MOODS, blendMoods, lerpHex, hexAlpha } from "./moods";
 import useMoodOrb from "./useMoodOrb";
 import Waveform from "./Waveform";
+import AskTheVibe from "./AskTheVibe";
 import { playMoodTone } from "./moodSound";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -316,6 +317,9 @@ export default function TheVibe({ variant = "playground", className = "" }) {
           </motion.div>
         </motion.div>
       </motion.div>
+
+      {/* ask the algorithm (playground, AI via Claude) */}
+      {isPlayground && <AskTheVibe orb={orb} />}
 
       {/* waveform */}
       <div className="absolute bottom-0 left-0 right-0 z-10">
