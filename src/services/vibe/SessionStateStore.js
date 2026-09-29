@@ -70,6 +70,14 @@ export default class SessionStateStore {
           latestQuery: "",
           termWeights: {},
           artistTermWeights: {}
+        },
+        recentSuggestedUris: [],
+        // IMPROVED (v2): Added seed artist rotation for cold-start discovery diversity
+        seedArtistRotation: {
+          topArtists: [],
+          rotationIndex: 0,
+          rotationCounter: 0,
+          rotationInterval: 3  // Rotate every 3 recommendations
         }
       });
     }
@@ -105,6 +113,30 @@ export default class SessionStateStore {
         (session.recommendedArtistCount[artistId] ?? 0) + 1;
     }
 
+    this.touch(session);
+    return this.snapshot(sessionId);
+  }
+
+  peekRecentSuggestedUris(sessionId) {
+    const session = this.ensureSession(sessionId);
+    return [...(session.recentSuggestedUris ?? [])];
+  }
+
+  appendRecentSuggestedUris(sessionId, uris) {
+    const session = this.ensureSession(sessionId);
+    if (!Array.isArray(session.recentSuggestedUris)) {
+      session.recentSuggestedUris = [];
+    }
+    for (const u of uris ?? []) {
+      const uri = String(u ?? "").trim();
+      if (uri) {
+        session.recentSuggestedUris.push(uri);
+      }
+    }
+    const max = 72;
+    while (session.recentSuggestedUris.length > max) {
+      session.recentSuggestedUris.shift();
+    }
     this.touch(session);
     return this.snapshot(sessionId);
   }

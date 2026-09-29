@@ -1,5 +1,14 @@
 import { detectProviderFromUrl, getProviderStrategy } from "./providers/musicProvider.js";
 import { UniversalPlayer } from "./universalPlayer.js";
+import {
+  showLoadingSpinner,
+  hideLoadingSpinner,
+  enhanceTabNavigation,
+  enhanceFormInputs,
+  updateTabAriaAttributes,
+  saveScrollPosition,
+  restoreScrollPosition
+} from "./app-helpers.js";
 
 const ACCESS_TOKEN_KEY = "spotify_helper_access_token";
 const REFRESH_TOKEN_KEY = "spotify_helper_refresh_token";
@@ -17,8 +26,16 @@ const DJ_SESSION_ID_KEY = "spotify_helper_dj_session_id";
 const DJ_REMIX_MODE_KEY = "spotify_helper_dj_remix_mode";
 const DJ_AUTOPILOT_ENABLED_KEY = "spotify_helper_dj_autopilot_enabled";
 const ADVANCED_SETTINGS_VISIBLE_KEY = "spotify_helper_advanced_settings_visible";
-const CONTEXT_MOOD_LEVEL_KEY = "spotify_helper_context_mood_level";
+const CONTEXT_MOOD_VALENCE_KEY = "spotify_helper_context_mood_valence";
+const CONTEXT_MOOD_ENERGY_KEY = "spotify_helper_context_mood_energy";
 const CONTEXT_NOSTALGIA_SLIDER_KEY = "spotify_helper_context_nostalgia_slider";
+const LYRIC_OFFSET_MS_KEY = "spotify_helper_lyric_offset_ms";
+const ACTIVE_APP_VIEW_KEY = "spotify_helper_active_app_view";
+const LISTENER_AGE_KEY = "spotify_helper_listener_age";
+const LISTENER_GENDER_KEY = "spotify_helper_listener_gender";
+const USE_LOCATION_ENABLED_KEY = "spotify_helper_use_location_enabled";
+const USE_LOCATION_COORDS_KEY = "spotify_helper_use_location_coords";
+const APP_VIEW_NAMES = ["player", "vibe", "settings"];
 
 const elements = {
   nowPlayingCard: document.getElementById("nowPlayingCard"),
@@ -27,6 +44,15 @@ const elements = {
   connectSpotifyHint: document.getElementById("connectSpotifyHint"),
   accessTokenLabel: document.getElementById("accessTokenLabel"),
   connectSpotifyButton: document.getElementById("connectSpotifyButton"),
+  connectSpotifyButtonLabel: document.getElementById("connectSpotifyButtonLabel"),
+  connectSoundcloudButton: document.getElementById("connectSoundcloudButton"),
+  connectAppleMusicButton: document.getElementById("connectAppleMusicButton"),
+  connectYoutubeMusicButton: document.getElementById("connectYoutubeMusicButton"),
+  connectTidalButton: document.getElementById("connectTidalButton"),
+  useLocationButton: document.getElementById("useLocationButton"),
+  locationStatus: document.getElementById("locationStatus"),
+  listenerAge: document.getElementById("listenerAge"),
+  listenerGender: document.getElementById("listenerGender"),
   accessToken: document.getElementById("accessToken"),
   refreshToken: document.getElementById("refreshToken"),
   refreshTokenButton: document.getElementById("refreshTokenButton"),
@@ -46,8 +72,6 @@ const elements = {
   quickPauseResumeButton: document.getElementById("quickPauseResumeButton"),
   quickNextButton: document.getElementById("quickNextButton"),
   quickPlayNowButton: document.getElementById("quickPlayNowButton"),
-  quickQueueOnlyButton: document.getElementById("quickQueueOnlyButton"),
-  quickQueueAndSeekButton: document.getElementById("quickQueueAndSeekButton"),
   actionInlineStatus: document.getElementById("actionInlineStatus"),
   statusLog: document.getElementById("statusLog"),
   fallbackCard: document.getElementById("fallbackCard"),
@@ -61,7 +85,11 @@ const elements = {
   nowPlayingTitleHero: document.getElementById("nowPlayingTitleHero"),
   nowPlayingArtistHero: document.getElementById("nowPlayingArtistHero"),
   nowPlayingAlbumHero: document.getElementById("nowPlayingAlbumHero"),
-  nowPlayingLyricLine: document.getElementById("nowPlayingLyricLine"),
+  nowPlayingLyricsViewport: document.getElementById("nowPlayingLyricsViewport"),
+  nowPlayingLyricsStage: document.getElementById("nowPlayingLyricsStage"),
+  nowPlayingLyricCurrent: document.getElementById("nowPlayingLyricCurrent"),
+  nowPlayingLyricsTransition: document.getElementById("nowPlayingLyricsTransition"),
+  lyricOffsetMs: document.getElementById("lyricOffsetMs"),
   nowPlayingTitle: document.getElementById("nowPlayingTitle"),
   nowPlayingArtist: document.getElementById("nowPlayingArtist"),
   nowPlayingAlbum: document.getElementById("nowPlayingAlbum"),
@@ -71,7 +99,8 @@ const elements = {
   refreshNowPlayingButton: document.getElementById("refreshNowPlayingButton"),
   generateRecommendationButton: document.getElementById("generateRecommendationButton"),
   environmentContextBadges: document.getElementById("environmentContextBadges"),
-  contextMoodLevel: document.getElementById("contextMoodLevel"),
+  moodPad: document.getElementById("moodPad"),
+  moodPadOrb: document.getElementById("moodPadOrb"),
   contextMoodLabel: document.getElementById("contextMoodLabel"),
   contextNostalgiaSlider: document.getElementById("contextNostalgiaSlider"),
   contextNostalgiaLabel: document.getElementById("contextNostalgiaLabel"),
@@ -97,7 +126,10 @@ const elements = {
   recommendationCandidates: document.getElementById("recommendationCandidates"),
   useRecommendationButton: document.getElementById("useRecommendationButton"),
   queueRecommendationButton: document.getElementById("queueRecommendationButton"),
-  queueTopCandidatesButton: document.getElementById("queueTopCandidatesButton")
+  queueTopCandidatesButton: document.getElementById("queueTopCandidatesButton"),
+  smartQueueStatus: document.getElementById("smartQueueStatus"),
+  smartQueueInlineStatus: document.getElementById("smartQueueInlineStatus"),
+  queueSmartQueueButton: document.getElementById("queueSmartQueueButton")
 };
 
 let pollingIntervalId = null;
@@ -110,9 +142,14 @@ let nowPlayingIntervalId = null;
 let nowPlayingInFlight = false;
 let recommendationInFlight = false;
 let latestRecommendationPlan = null;
+let smartQueueInFlight = false;
 const NOW_PLAYING_POLL_ACTIVE_MS = 1000;
 const NOW_PLAYING_POLL_IDLE_MS = 1800;
 const PLAYBACK_STATE_CACHE_TTL_MS = 650;
+// Autopilot and flow-injection ticks read this same cache instead of forcing
+// their own fetch, so they piggyback on whatever the now-playing loop (which
+// already polls at NOW_PLAYING_POLL_ACTIVE_MS while either is active) last fetched.
+const LIVE_ACTION_CACHE_TTL_MS = 700;
 let autoplayIntervalId = null;
 let autoplayInFlight = false;
 let lastAutoplayTriggerTrackUri = null;
@@ -120,7 +157,10 @@ let flowInjectionWatcherId = null;
 let flowInjectionInFlight = false;
 let pendingFlowInjection = null;
 let lastInjectedAiTrackId = null;
+const ENV_SIGNALS_CACHE_TTL_MS = 20 * 60 * 1000;
 let cachedEnvironmentSignals = null;
+let environmentSignalsFetchedAtMs = 0;
+let environmentRefreshPromise = null;
 let cachedSpotifyProfileContext = null;
 let spotifyProfileFetchPromise = null;
 let playbackStateCache = {
@@ -137,15 +177,38 @@ let activeLyricChunks = [];
 let activeTimedLyricLines = [];
 let activeLyricSource = "waiting";
 let activeLyricFetchTrackUri = "";
-let lyricCaptionDisplayed = "";
-let lyricFadeGeneration = 0;
-let lyricFadeTimerId = null;
+let lyricsListSignature = "";
+let lastLyricVisualFingerprint = "";
+let lyricsPlaceholderFadeGeneration = 0;
+let lastLyricMarqueeText = "";
+
+const LYRIC_LINE_FADE_IN_MS = 520;
 let heroCoverBarRgb = null;
 let heroCoverPaletteSourceUrl = "";
 let heroVisualizerBars = [];
 let heroVisualizerBarLevels = [];
 let heroVisualizerAnimFrameId = null;
 const HERO_VISUALIZER_BAR_COUNT = 30;
+
+// Bars are grouped into "instrument" bands so each cluster reacts to the
+// music with its own hue, sensitivity, and attack/release feel instead of
+// all 30 bars moving identically.
+const HERO_VISUALIZER_INSTRUMENT_BANDS = [
+  { name: "bass", hue: 6, sensitivity: 1.18, attackMul: 0.72, releaseMul: 0.5 },
+  { name: "drums", hue: 42, sensitivity: 1.05, attackMul: 1.4, releaseMul: 1.3 },
+  { name: "melody", hue: 150, sensitivity: 0.96, attackMul: 1.0, releaseMul: 0.85 },
+  { name: "vocals", hue: 258, sensitivity: 1.1, attackMul: 1.22, releaseMul: 0.68 }
+];
+
+function getInstrumentBand(index, barCount) {
+  const bandCount = HERO_VISUALIZER_INSTRUMENT_BANDS.length;
+  const bandIndex = clamp(
+    Math.floor((index / Math.max(1, barCount)) * bandCount),
+    0,
+    bandCount - 1
+  );
+  return HERO_VISUALIZER_INSTRUMENT_BANDS[bandIndex];
+}
 let visualizerAudioContext = null;
 let visualizerAnalyser = null;
 let visualizerMicStream = null;
@@ -162,7 +225,9 @@ let activeSongSpectrumSegmentIndex = 0;
 const PROVIDER_DISPLAY_NAMES = {
   spotify: "Spotify",
   soundcloud: "SoundCloud",
-  apple_music: "Apple Music"
+  apple_music: "Apple Music",
+  youtube_music: "YouTube Music",
+  tidal: "Tidal"
 };
 
 function getSelectedProvider() {
@@ -234,23 +299,25 @@ function rgbToHslChannel(r, g, b) {
   return { h: h * 360, s, l };
 }
 
-function coverRgbToBarGradient(rgb, smoothed, accent) {
+function coverRgbToBarGradient(rgb, smoothed, accent, band) {
   const { h, s, l } = rgbToHslChannel(rgb.r, rgb.g, rgb.b);
   const energy = accent != null ? accent : smoothed;
+  const bandHue = band ? band.hue : h;
+  const h0 = (h * 0.6 + bandHue * 0.4 + 360) % 360;
   const satPct = clamp(s * 100 * (1.05 + energy * 0.15), 38, 100);
   const baseLPct = clamp(l * 100, 10, 88);
   const topL = clamp(baseLPct + 20 + smoothed * 28, 32, 97);
   const botL = clamp(baseLPct - 8 + smoothed * 22, 12, 78);
-  const topColor = `hsla(${h.toFixed(1)}, ${satPct.toFixed(1)}%, ${topL.toFixed(1)}%, 0.97)`;
-  const bottomColor = `hsla(${((h + 14) % 360).toFixed(1)}, ${(satPct * 0.88).toFixed(1)}%, ${botL.toFixed(1)}%, 0.9)`;
-  const glow = `hsla(${h.toFixed(1)}, ${satPct.toFixed(1)}%, ${topL.toFixed(1)}%, ${(0.24 + smoothed * 0.44).toFixed(2)})`;
+  const topColor = `hsla(${h0.toFixed(1)}, ${satPct.toFixed(1)}%, ${topL.toFixed(1)}%, 0.97)`;
+  const bottomColor = `hsla(${((h0 + 14) % 360).toFixed(1)}, ${(satPct * 0.88).toFixed(1)}%, ${botL.toFixed(1)}%, 0.9)`;
+  const glow = `hsla(${h0.toFixed(1)}, ${satPct.toFixed(1)}%, ${topL.toFixed(1)}%, ${(0.24 + smoothed * 0.44).toFixed(2)})`;
   return { topColor, bottomColor, glow };
 }
 
-function hslFallbackBarGradient(index, smoothed, accent) {
+function hslFallbackBarGradient(index, smoothed, accent, band) {
   const energy = accent != null ? accent : smoothed;
-  const hueBase = (index / Math.max(1, heroVisualizerBars.length - 1)) * 285;
-  const hue = (hueBase + energy * 40) % 360;
+  const baseHue = band ? band.hue : (index / Math.max(1, heroVisualizerBars.length - 1)) * 285;
+  const hue = (baseHue + energy * 26) % 360;
   const topColor = `hsla(${hue.toFixed(0)}, 97%, ${(48 + smoothed * 30).toFixed(1)}%, 0.97)`;
   const bottomColor = `hsla(${((hue + 32) % 360).toFixed(0)}, 90%, ${(28 + smoothed * 20).toFixed(1)}%, 0.9)`;
   const glow = `hsla(${hue.toFixed(0)}, 98%, ${(48 + smoothed * 24).toFixed(1)}%, ${(0.28 + smoothed * 0.4).toFixed(2)})`;
@@ -262,10 +329,11 @@ function paintHeroBarColors(index, smoothed, accent = null) {
   if (!bar) {
     return;
   }
+  const band = getInstrumentBand(index, heroVisualizerBars.length);
   const rgb = heroCoverBarRgb?.[index];
   const { topColor, bottomColor, glow } = rgb
-    ? coverRgbToBarGradient(rgb, smoothed, accent)
-    : hslFallbackBarGradient(index, smoothed, accent);
+    ? coverRgbToBarGradient(rgb, smoothed, accent, band)
+    : hslFallbackBarGradient(index, smoothed, accent, band);
   bar.style.background = `linear-gradient(180deg, ${topColor}, ${bottomColor})`;
   bar.style.boxShadow = `0 0 ${Math.round(8 + smoothed * 17)}px ${glow}`;
 }
@@ -385,20 +453,58 @@ function refreshHeroCoverPalette(imageUrl) {
   img.src = url;
 }
 
+function clearInlineStatusTimers(element) {
+  if (element._inlineStatusFadeTimeout) {
+    clearTimeout(element._inlineStatusFadeTimeout);
+    element._inlineStatusFadeTimeout = null;
+  }
+  if (element._inlineStatusHideTimeout) {
+    clearTimeout(element._inlineStatusHideTimeout);
+    element._inlineStatusHideTimeout = null;
+  }
+}
+
+function hideInlineStatus(element) {
+  clearInlineStatusTimers(element);
+  element.textContent = "";
+  element.classList.add("hidden");
+  element.classList.remove("info", "success", "error", "fading");
+}
+
 function setInlineStatus(element, message = "", tone = "info") {
   if (!element) {
     return;
   }
+  clearInlineStatusTimers(element);
   const text = String(message ?? "").trim();
   if (!text) {
-    element.textContent = "";
-    element.classList.add("hidden");
-    element.classList.remove("info", "success", "error");
+    hideInlineStatus(element);
     return;
   }
-  element.textContent = text;
-  element.classList.remove("hidden", "info", "success", "error");
+
+  element.textContent = "";
+  element.classList.remove("hidden", "fading", "info", "success", "error");
   element.classList.add(tone);
+
+  const textSpan = document.createElement("span");
+  textSpan.className = "inline-status-text";
+  textSpan.textContent = text;
+
+  const dismissButton = document.createElement("button");
+  dismissButton.type = "button";
+  dismissButton.className = "inline-status-dismiss";
+  dismissButton.setAttribute("aria-label", "Dismiss message");
+  dismissButton.textContent = "\u00d7";
+  dismissButton.addEventListener("click", () => hideInlineStatus(element));
+
+  element.appendChild(textSpan);
+  element.appendChild(dismissButton);
+
+  const fadeDelayMs = tone === "error" ? 9000 : 6000;
+  element._inlineStatusFadeTimeout = setTimeout(() => {
+    element.classList.add("fading");
+    element._inlineStatusHideTimeout = setTimeout(() => hideInlineStatus(element), 700);
+  }, fadeDelayMs);
 }
 
 function setSearchInlineStatus(message = "", tone = "info") {
@@ -447,54 +553,398 @@ function setAdvancedSettingsVisible(visible) {
   }
 }
 
-function moodLabelFromLevel(level) {
-  const value = clamp(Number(level) || 0, 0, 100);
-  if (value <= 25) {
-    return "Mellow";
-  }
-  if (value <= 45) {
-    return "Chill";
-  }
-  if (value <= 65) {
-    return "Balanced";
-  }
-  if (value <= 85) {
-    return "Upbeat";
-  }
-  return "Hype";
+function getActiveAppView() {
+  const saved = localStorage.getItem(ACTIVE_APP_VIEW_KEY);
+  return APP_VIEW_NAMES.includes(saved) ? saved : "player";
 }
 
-function getStubEnvironmentSignals() {
-  if (cachedEnvironmentSignals) {
-    return cachedEnvironmentSignals;
+function setActiveAppView(viewName) {
+  const name = APP_VIEW_NAMES.includes(viewName) ? viewName : "player";
+  
+  // Save scroll position of currently active view
+  const currentView = document.querySelector(".app-view.is-active");
+  if (currentView) {
+    const currentViewName = currentView.id.replace("view-", "");
+    saveScrollPosition(currentViewName);
+  }
+  
+  localStorage.setItem(ACTIVE_APP_VIEW_KEY, name);
+
+  for (const tab of document.querySelectorAll(".app-nav-tab")) {
+    const isActive = tab.dataset.view === name;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
   }
 
-  const now = new Date();
-  const month = now.getMonth();
-  const day = now.getDate();
-  const hour = now.getHours();
+  for (const panel of document.querySelectorAll(".app-view")) {
+    panel.classList.toggle("is-active", panel.dataset.viewPanel === name);
+  }
+  
+  // Restore scroll position for new view
+  requestAnimationFrame(() => {
+    restoreScrollPosition(name);
+  });
+}
 
+// 2D vibe pad: valence (x, 0=sad/calm mood, 100=happy mood) and energy
+// (y, 0=low intensity, 100=high intensity), mirroring the quadrants
+// VibeEngine's moodSpaceContinuity scoring already uses server-side.
+const moodPadState = { valence: 50, energy: 50 };
+const MOOD_PAD_ZONE_TARGETS = {
+  euphoric: { valence: 82, energy: 82 },
+  intense: { valence: 18, energy: 82 },
+  chill: { valence: 82, energy: 18 },
+  melancholy: { valence: 18, energy: 18 }
+};
+
+function moodZoneLabel(valence, energy) {
+  const v = clamp(Number(valence) || 0, 0, 100);
+  const e = clamp(Number(energy) || 0, 0, 100);
+  if (Math.hypot(v - 50, e - 50) < 12) {
+    return "Balanced";
+  }
+  const isHappy = v > 50;
+  const isEnergetic = e > 50;
+  if (isHappy && isEnergetic) {
+    return "Euphoric";
+  }
+  if (!isHappy && isEnergetic) {
+    return "Intense";
+  }
+  if (isHappy && !isEnergetic) {
+    return "Chill";
+  }
+  return "Melancholy";
+}
+
+function renderMoodPad() {
+  if (!elements.moodPad) {
+    return;
+  }
+  const { valence, energy } = moodPadState;
+  elements.moodPad.style.setProperty("--mood-pad-x", `${valence}%`);
+  elements.moodPad.style.setProperty("--mood-pad-y", `${energy}%`);
+  const label = moodZoneLabel(valence, energy);
+  elements.moodPad.setAttribute("aria-valuenow", String(Math.round((valence + energy) / 2)));
+  elements.moodPad.setAttribute(
+    "aria-valuetext",
+    `${label}, energy ${Math.round(energy)}, valence ${Math.round(valence)}`
+  );
+  if (elements.contextMoodLabel) {
+    elements.contextMoodLabel.textContent = `${label} · energy ${Math.round(
+      energy
+    )} · valence ${Math.round(valence)}`;
+  }
+}
+
+function setMoodPadPosition(valence, energy, { persist = true } = {}) {
+  moodPadState.valence = clamp(Number(valence) || 0, 0, 100);
+  moodPadState.energy = clamp(Number(energy) || 0, 0, 100);
+  renderMoodPad();
+  if (persist) {
+    saveInputsToLocalStorage();
+  }
+}
+
+function moodPadPointFromClientCoords(clientX, clientY) {
+  const rect = elements.moodPad.getBoundingClientRect();
+  const valence = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
+  // Pad y=0 is the top of the element, but energy=0 should sit at the bottom.
+  const energy = clamp((1 - (clientY - rect.top) / rect.height) * 100, 0, 100);
+  return { valence, energy };
+}
+
+let moodPadDragging = false;
+
+function handleMoodPadPointerMove(event) {
+  if (!moodPadDragging) {
+    return;
+  }
+  const point = moodPadPointFromClientCoords(event.clientX, event.clientY);
+  setMoodPadPosition(point.valence, point.energy);
+}
+
+function stopMoodPadDrag() {
+  if (!moodPadDragging) {
+    return;
+  }
+  moodPadDragging = false;
+  elements.moodPad?.classList.remove("is-dragging");
+  window.removeEventListener("pointermove", handleMoodPadPointerMove);
+  window.removeEventListener("pointerup", stopMoodPadDrag);
+}
+
+function initMoodPad() {
+  if (!elements.moodPad) {
+    return;
+  }
+  elements.moodPad.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".mood-pad-zone")) {
+      return;
+    }
+    moodPadDragging = true;
+    elements.moodPad.classList.add("is-dragging");
+    elements.moodPad.focus();
+    const point = moodPadPointFromClientCoords(event.clientX, event.clientY);
+    setMoodPadPosition(point.valence, point.energy);
+    window.addEventListener("pointermove", handleMoodPadPointerMove);
+    window.addEventListener("pointerup", stopMoodPadDrag);
+    event.preventDefault();
+  });
+
+  elements.moodPad.addEventListener("click", (event) => {
+    const zoneEl = event.target.closest(".mood-pad-zone");
+    if (!zoneEl) {
+      return;
+    }
+    const target = MOOD_PAD_ZONE_TARGETS[zoneEl.dataset.zone];
+    if (target) {
+      setMoodPadPosition(target.valence, target.energy);
+    }
+  });
+
+  elements.moodPad.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 10 : 5;
+    let { valence, energy } = moodPadState;
+    if (event.key === "ArrowLeft") {
+      valence -= step;
+    } else if (event.key === "ArrowRight") {
+      valence += step;
+    } else if (event.key === "ArrowUp") {
+      energy += step;
+    } else if (event.key === "ArrowDown") {
+      energy -= step;
+    } else {
+      return;
+    }
+    setMoodPadPosition(valence, energy);
+    event.preventDefault();
+  });
+}
+
+const SOUTHERN_HEMISPHERE_COUNTRY_CODES = new Set([
+  "AR",
+  "AU",
+  "BO",
+  "BR",
+  "BW",
+  "CL",
+  "FK",
+  "GF",
+  "MG",
+  "MZ",
+  "NA",
+  "NZ",
+  "PY",
+  "RE",
+  "SH",
+  "SR",
+  "SZ",
+  "TZ",
+  "UY",
+  "ZA",
+  "ZW",
+  "PF",
+  "NC",
+  "WF"
+]);
+
+function isSouthernHemisphereHint(latitude, countryCode) {
+  if (Number.isFinite(latitude) && latitude !== 0) {
+    return latitude < 0;
+  }
+  return SOUTHERN_HEMISPHERE_COUNTRY_CODES.has(String(countryCode ?? "").trim().toUpperCase());
+}
+
+function seasonVibeLabel(monthIndex, southern) {
+  const m = monthIndex;
+  if (!southern) {
+    if (m >= 2 && m <= 4) {
+      return "Spring vibe";
+    }
+    if (m >= 5 && m <= 7) {
+      return "Summer vibe";
+    }
+    if (m >= 8 && m <= 10) {
+      return "Autumn vibe";
+    }
+    return "Winter vibe";
+  }
+  if (m >= 8 && m <= 10) {
+    return "Spring vibe";
+  }
+  if (m === 11 || m <= 1) {
+    return "Summer vibe";
+  }
+  if (m >= 2 && m <= 4) {
+    return "Autumn vibe";
+  }
+  return "Winter vibe";
+}
+
+function baselineTempCForLocalSeason(now, southern) {
+  const month = now.getMonth();
+  const effectiveMonth = southern ? (month + 6) % 12 : month;
+  const hour = now.getHours();
   let baselineTemp = 22;
-  if ([11, 0, 1].includes(month)) {
+  if ([11, 0, 1].includes(effectiveMonth)) {
     baselineTemp = 9;
-  } else if ([5, 6, 7].includes(month)) {
+  } else if ([5, 6, 7].includes(effectiveMonth)) {
     baselineTemp = 28;
-  } else if ([2, 3, 4].includes(month)) {
+  } else if ([2, 3, 4].includes(effectiveMonth)) {
     baselineTemp = 18;
   } else {
     baselineTemp = 20;
   }
-
   const diurnalShift = hour >= 14 && hour <= 18 ? 2 : hour <= 6 ? -2 : 0;
-  const tempC = Math.round(baselineTemp + diurnalShift);
-  const weatherCycle = ["clear", "cloudy", "rain"];
-  const weather = weatherCycle[day % weatherCycle.length];
+  return Math.round(baselineTemp + diurnalShift);
+}
 
-  cachedEnvironmentSignals = {
-    tempC,
-    weather
+function mapWmoWeatherCode(code) {
+  const c = Number(code);
+  if (!Number.isFinite(c)) {
+    return { weather: "clear", label: "Clear" };
+  }
+  if (c === 0) {
+    return { weather: "clear", label: "Clear" };
+  }
+  if (c === 1) {
+    return { weather: "mainly clear", label: "Mainly clear" };
+  }
+  if (c === 2) {
+    return { weather: "partly cloudy", label: "Partly cloudy" };
+  }
+  if (c === 3) {
+    return { weather: "overcast", label: "Overcast" };
+  }
+  if (c === 45 || c === 48) {
+    return { weather: "fog", label: "Fog" };
+  }
+  if (c >= 51 && c <= 55) {
+    return { weather: "light drizzle rain", label: "Drizzle" };
+  }
+  if (c === 56 || c === 57) {
+    return { weather: "freezing drizzle rain", label: "Freezing drizzle" };
+  }
+  if (c >= 61 && c <= 65) {
+    return { weather: "rain", label: "Rain" };
+  }
+  if (c === 66 || c === 67) {
+    return { weather: "freezing rain", label: "Freezing rain" };
+  }
+  if (c >= 71 && c <= 77) {
+    return { weather: "snow", label: "Snow" };
+  }
+  if (c === 80 || c === 81) {
+    return { weather: "rain showers", label: "Rain showers" };
+  }
+  if (c === 82) {
+    return { weather: "heavy rain showers", label: "Heavy showers" };
+  }
+  if (c === 85 || c === 86) {
+    return { weather: "snow showers", label: "Snow showers" };
+  }
+  if (c >= 95 && c <= 99) {
+    return { weather: "thunderstorm rain", label: "Thunderstorm" };
+  }
+  return { weather: "cloudy", label: "Cloudy" };
+}
+
+function computeFallbackEnvironmentSignals() {
+  const now = new Date();
+  const profileCountry = String(cachedSpotifyProfileContext?.countryCode ?? "")
+    .trim()
+    .toUpperCase();
+  const navCountry = getCountryCodeFromNavigator();
+  const countryCode = profileCountry || navCountry;
+  const southern = isSouthernHemisphereHint(null, countryCode);
+  return {
+    tempC: baselineTempCForLocalSeason(now, southern),
+    weather: "clear",
+    weatherLabel: "Clear (estimated — enable location for live weather)",
+    seasonVibe: seasonVibeLabel(now.getMonth(), southern),
+    source: "fallback",
+    latitude: null,
+    longitude: null
   };
-  return cachedEnvironmentSignals;
+}
+
+function getEnvironmentSignalsSync() {
+  const nowMs = Date.now();
+  if (
+    cachedEnvironmentSignals &&
+    cachedEnvironmentSignals.source === "openmeteo" &&
+    nowMs - environmentSignalsFetchedAtMs < ENV_SIGNALS_CACHE_TTL_MS
+  ) {
+    return cachedEnvironmentSignals;
+  }
+  return computeFallbackEnvironmentSignals();
+}
+
+async function refreshLiveEnvironmentSignals() {
+  const nowMs = Date.now();
+  if (
+    cachedEnvironmentSignals?.source === "openmeteo" &&
+    nowMs - environmentSignalsFetchedAtMs < ENV_SIGNALS_CACHE_TTL_MS
+  ) {
+    return cachedEnvironmentSignals;
+  }
+  if (environmentRefreshPromise) {
+    return environmentRefreshPromise;
+  }
+
+  environmentRefreshPromise = (async () => {
+    try {
+      if (!navigator.geolocation) {
+        throw new Error("Geolocation unavailable");
+      }
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          maximumAge: 10 * 60 * 1000,
+          timeout: 12_000
+        });
+      });
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(
+        String(lat)
+      )}&longitude=${encodeURIComponent(
+        String(lon)
+      )}&current=temperature_2m,weather_code,is_day&timezone=auto`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Open-Meteo HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const t = data?.current?.temperature_2m;
+      const code = data?.current?.weather_code;
+      if (!Number.isFinite(Number(t))) {
+        throw new Error("Open-Meteo missing temperature");
+      }
+      const mapped = mapWmoWeatherCode(code);
+      const southern = lat < 0;
+      cachedEnvironmentSignals = {
+        tempC: Math.round(Number(t)),
+        weather: String(mapped.weather).toLowerCase(),
+        weatherLabel: mapped.label,
+        seasonVibe: seasonVibeLabel(new Date().getMonth(), southern),
+        source: "openmeteo",
+        latitude: lat,
+        longitude: lon
+      };
+      environmentSignalsFetchedAtMs = Date.now();
+      updateEnvironmentContextBar();
+      return cachedEnvironmentSignals;
+    } catch {
+      updateEnvironmentContextBar();
+      return null;
+    } finally {
+      environmentRefreshPromise = null;
+    }
+  })();
+
+  return environmentRefreshPromise;
 }
 
 function getCountryCodeFromNavigator() {
@@ -557,6 +1007,64 @@ async function refreshSpotifyProfileContext({ silent = true } = {}) {
   return spotifyProfileFetchPromise;
 }
 
+async function loadPersonalizationData({ silent = true } = {}) {
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) return null;
+
+  try {
+    const data = await apiRequest(
+      "/auth/personalization",
+      "GET",
+      accessToken
+    );
+    if (data) {
+      if (data.country) {
+        elements.locationStatus.textContent = `From Spotify: ${data.country}`;
+      }
+      if (data.age) {
+        elements.listenerAge.value = data.age;
+      }
+      if (data.gender && data.gender !== 'unspecified') {
+        elements.listenerGender.value = data.gender;
+      }
+    }
+    return data;
+  } catch (error) {
+    if (!silent) {
+      logStatus(`Could not load personalization data: ${error.message}`);
+    }
+    return null;
+  }
+}
+
+async function savePersonalizationData() {
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) return false;
+
+  const age = Number(elements.listenerAge.value);
+  const gender = elements.listenerGender.value;
+
+  if (!age || !gender || gender === 'unspecified') {
+    return false;
+  }
+
+  try {
+    const result = await apiRequest(
+      "/auth/personalization",
+      "POST",
+      accessToken,
+      { age, gender }
+    );
+    if (result?.saved) {
+      logStatus("Personalization settings saved.");
+      return true;
+    }
+  } catch (error) {
+    logStatus(`Could not save personalization: ${error.message}`);
+  }
+  return false;
+}
+
 function nostalgiaLabelFromLevel(n) {
   const v = clamp(Number(n) || 0, 0, 100);
   if (v <= 5) {
@@ -575,8 +1083,9 @@ function nostalgiaLabelFromLevel(n) {
 }
 
 function buildUserContext() {
-  const signals = getStubEnvironmentSignals();
-  const moodLevel = clamp(Number(elements.contextMoodLevel.value || 50), 0, 100);
+  const signals = getEnvironmentSignalsSync();
+  const moodValence = clamp(Number(moodPadState.valence), 0, 100);
+  const moodEnergy = clamp(Number(moodPadState.energy), 0, 100);
   const nostalgiaSlider = clamp(
     Number(elements.contextNostalgiaSlider?.value ?? 50),
     0,
@@ -592,15 +1101,84 @@ function buildUserContext() {
   return {
     tempC: signals.tempC,
     weather: signals.weather,
+    weatherLabel: signals.weatherLabel ?? signals.weather,
+    seasonVibe: signals.seasonVibe ?? "",
+    environmentSource: signals.source ?? "fallback",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
     countryCode: profileCountry || getCountryCodeFromNavigator(),
     localHour: new Date().getHours(),
     accountAgeYears: 0,
-    gender: "unspecified",
+    age: Number(elements.listenerAge?.value) || null,
+    gender: elements.listenerGender?.value || "unspecified",
     emailDomain,
-    moodLevel,
+    moodValence,
+    moodEnergy,
     nostalgiaSlider
   };
+}
+
+const VIBE_TEMP_DISPLAY_UNIT_KEY = "vibeTempDisplayUnit";
+
+function getStoredTempDisplayUnit() {
+  return String(localStorage.getItem(VIBE_TEMP_DISPLAY_UNIT_KEY) ?? "auto")
+    .trim()
+    .toLowerCase();
+}
+
+function resolveOutdoorTempDisplayFahrenheit() {
+  const stored = getStoredTempDisplayUnit();
+  if (stored === "celsius" || stored === "c") {
+    return false;
+  }
+  if (stored === "fahrenheit" || stored === "f") {
+    return true;
+  }
+  const profile = String(cachedSpotifyProfileContext?.countryCode ?? "")
+    .trim()
+    .toUpperCase();
+  const nav = getCountryCodeFromNavigator();
+  return profile === "US" || nav === "US";
+}
+
+function celsiusToFahrenheitRounded(tempC) {
+  const c = Number(tempC);
+  if (!Number.isFinite(c)) {
+    return 0;
+  }
+  return Math.round((c * 9) / 5 + 32);
+}
+
+function formatOutdoorTempBadge(tempC, useFahrenheit) {
+  const c = Math.round(Number(tempC) || 0);
+  if (useFahrenheit) {
+    return `${celsiusToFahrenheitRounded(c)}\u202F°F`;
+  }
+  return `${c}\u202F°C`;
+}
+
+function outdoorTempBadgeTitle(tempC, useFahrenheit, liveEnv) {
+  const c = Math.round(Number(tempC) || 0);
+  const f = celsiusToFahrenheitRounded(c);
+  const primary = useFahrenheit ? `${f} °F` : `${c} °C`;
+  const secondary = useFahrenheit ? `${c} °C` : `${f} °F`;
+  const src = liveEnv
+    ? "Live (Open-Meteo). Recommendations still use °C under the hood."
+    : "Estimated until location is on. Recommendations still use °C under the hood.";
+  return `${primary} (${secondary}). ${src} Click to cycle °F / °C / auto (auto: °F in US).`;
+}
+
+function cycleOutdoorTempDisplayUnit() {
+  const cur = getStoredTempDisplayUnit();
+  let next = "auto";
+  if (cur === "auto" || cur === "") {
+    next = "celsius";
+  } else if (cur === "celsius" || cur === "c") {
+    next = "fahrenheit";
+  } else {
+    next = "auto";
+  }
+  localStorage.setItem(VIBE_TEMP_DISPLAY_UNIT_KEY, next);
+  updateEnvironmentContextBar();
 }
 
 function weatherEmoji(weather) {
@@ -617,6 +1195,9 @@ function weatherEmoji(weather) {
   if (s.includes("snow")) {
     return "❄️";
   }
+  if (s.includes("fog")) {
+    return "🌫️";
+  }
   if (s.includes("storm") || s.includes("thunder")) {
     return "⛈️";
   }
@@ -631,27 +1212,38 @@ function renderContextBadges() {
     return;
   }
   const context = buildUserContext();
-  const moodLabel = moodLabelFromLevel(context.moodLevel);
-  const temp = Math.round(Number(context.tempC) || 0);
+  const moodLabel = moodZoneLabel(context.moodValence, context.moodEnergy);
+  const tempC = Number(context.tempC);
+  const useFahrenheit = resolveOutdoorTempDisplayFahrenheit();
+  const tempBadgeText = formatOutdoorTempBadge(tempC, useFahrenheit);
   const wIcon = weatherEmoji(context.weather);
-  const weatherLabel = String(context.weather || "Clear");
+  const weatherLabel = String(context.weatherLabel || context.weather || "Clear");
+  const seasonVibe = String(context.seasonVibe || "").trim();
   const region = context.countryCode || "—";
   const nostalgiaShort = nostalgiaLabelFromLevel(context.nostalgiaSlider);
+  const liveEnv = context.environmentSource === "openmeteo";
+  const tempTitle = outdoorTempBadgeTitle(tempC, useFahrenheit, liveEnv);
+  const wxTitle = liveEnv
+    ? "Current conditions from Open-Meteo (WMO codes)"
+    : "Conditions not available without location — defaulting to clear";
+  const seasonTitle =
+    "Season label uses calendar month; hemisphere from your coordinates when location is on, otherwise from your Spotify country or browser locale.";
+  const seasonHtml = seasonVibe
+    ? `<span class="ctx-badge" title="${seasonTitle}"><span class="ic">🗓️</span>${seasonVibe}</span>`
+    : "";
   elements.environmentContextBadges.innerHTML = `
     <span class="ctx-badge" title="Mood"><span class="ic">🎚️</span>${moodLabel}</span>
     <span class="ctx-badge" title="Nostalgia timeline (release-year fit)"><span class="ic">⏳</span>${nostalgiaShort}</span>
-    <span class="ctx-badge" title="Temperature"><span class="ic">🌡️</span>${temp}°C</span>
-    <span class="ctx-badge" title="Weather"><span class="ic">${wIcon}</span>${weatherLabel}</span>
+    ${seasonHtml}
+    <span class="ctx-badge ctx-badge--clickable" data-temp-display-cycle="1" role="button" tabindex="0" title="${tempTitle}"><span class="ic">🌡️</span>${tempBadgeText}</span>
+    <span class="ctx-badge" title="${wxTitle}"><span class="ic">${wIcon}</span>${weatherLabel}</span>
     <span class="ctx-badge" title="Region"><span class="ic">🌍</span>${region}</span>
   `;
 }
 
 function updateEnvironmentContextBar() {
   const context = buildUserContext();
-  const moodLabel = moodLabelFromLevel(context.moodLevel);
-  elements.contextMoodLabel.textContent = `${moodLabel} (${Math.round(
-    context.moodLevel
-  )})`;
+  renderMoodPad();
   if (elements.contextNostalgiaLabel && elements.contextNostalgiaSlider) {
     const nl = nostalgiaLabelFromLevel(context.nostalgiaSlider);
     elements.contextNostalgiaLabel.textContent = `${nl} (${Math.round(
@@ -721,12 +1313,11 @@ function setActionButtonsDisabled(disabled) {
   elements.quickPauseResumeButton.disabled = disabled;
   elements.quickNextButton.disabled = disabled;
   elements.quickPlayNowButton.disabled = disabled;
-  elements.quickQueueOnlyButton.disabled = disabled;
-  elements.quickQueueAndSeekButton.disabled = disabled;
 }
 
 function setPauseResumeButtonLabel(isPlaying) {
-  elements.quickPauseResumeButton.textContent = isPlaying ? "Pause" : "Resume";
+  elements.quickPauseResumeButton.textContent = isPlaying ? "⏸" : "▶";
+  elements.quickPauseResumeButton.setAttribute("aria-label", isPlaying ? "Pause" : "Resume");
 }
 
 function setFlowInjectionIndicator(message = "") {
@@ -778,12 +1369,222 @@ function clearSearchResults(message = "") {
   }
 }
 
-function renderSearchResults(tracks) {
+
+// Audio features cache for current track metadata display
+const audioFeaturesCache = new Map();
+
+async function fetchAudioFeatures(accessToken, trackIds) {
+  if (!trackIds || trackIds.length === 0) return {};
+
+  // Check cache first
+  const uncachedIds = trackIds.filter(id => !audioFeaturesCache.has(id));
+  if (uncachedIds.length === 0) {
+    // All in cache
+    const result = {};
+    trackIds.forEach(id => {
+      if (audioFeaturesCache.has(id)) {
+        result[id] = audioFeaturesCache.get(id);
+      }
+    });
+    return result;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      trackIds: uncachedIds.join(",")
+    });
+    const features = await apiRequest(
+      `/auth/spotify/audio-features?${params.toString()}`,
+      "GET",
+      accessToken
+    );
+
+    // Cache results
+    Object.entries(features).forEach(([trackId, data]) => {
+      audioFeaturesCache.set(trackId, data);
+    });
+
+    // Return all requested (cached + newly fetched)
+    const result = {};
+    trackIds.forEach(id => {
+      if (audioFeaturesCache.has(id)) {
+        result[id] = audioFeaturesCache.get(id);
+      }
+    });
+    return result;
+  } catch (error) {
+    logStatus(`Could not fetch audio features: ${error.message}`);
+    return {};
+  }
+}
+
+function computeBpmMatch(seedTempo, trackTempo) {
+  if (!Number.isFinite(seedTempo) || !Number.isFinite(trackTempo)) {
+    return null;
+  }
+  if (seedTempo <= 0 || trackTempo <= 0) return null;
+
+  // Calculate direct difference and account for half/double tempo
+  const direct = Math.abs(seedTempo - trackTempo);
+  const halfDouble = Math.abs(seedTempo * 0.5 - trackTempo);
+  const doubleHalf = Math.abs(seedTempo * 2 - trackTempo);
+
+  const diff = Math.min(direct, halfDouble, doubleHalf);
+  const percentage = Math.max(0, 100 - (diff / seedTempo) * 100);
+
+  return {
+    seedTempo: Math.round(seedTempo),
+    trackTempo: Math.round(trackTempo),
+    diff: Math.round(diff * 10) / 10,
+    matchPercent: Math.round(percentage),
+    quality: percentage >= 90 ? "high" : percentage >= 75 ? "medium" : "low"
+  };
+}
+
+function computeEnergyLevel(trackEnergy) {
+  if (!Number.isFinite(trackEnergy)) return null;
+  // Spotify energy is 0-1, convert to 1-5 scale
+  const level = Math.ceil(trackEnergy * 5);
+  return {
+    level: Math.max(1, Math.min(5, level)),
+    raw: Math.round(trackEnergy * 100)
+  };
+}
+
+function createMetadataDisplay(seedTrack, resultTrack, audioFeatures) {
+  if (!seedTrack || !resultTrack || !audioFeatures) {
+    return null;
+  }
+
+  const resultId = resultTrack.id;
+  const seedId = seedTrack.id;
+
+  const seedFeatures = audioFeatures[seedId];
+  const resultFeatures = audioFeatures[resultId];
+
+  if (!seedFeatures || !resultFeatures) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  container.className = "result-metadata";
+
+  // BPM Match
+  const bpmMatch = computeBpmMatch(seedFeatures.tempo, resultFeatures.tempo);
+  if (bpmMatch) {
+    const bpmDiv = document.createElement("div");
+    bpmDiv.className = "metadata-metric";
+
+    const label = document.createElement("div");
+    label.className = "metadata-label";
+    label.textContent = "BPM";
+
+    const value = document.createElement("div");
+    value.className = "metadata-value";
+    value.textContent = `${bpmMatch.trackTempo}`;
+
+    const bar = document.createElement("div");
+    bar.className = "metadata-bar";
+
+    const fill = document.createElement("div");
+    fill.className = "metadata-bar-fill";
+    fill.style.width = `${Math.min(100, bpmMatch.matchPercent)}%`;
+
+    bar.appendChild(fill);
+
+    const badge = document.createElement("div");
+    badge.className = `metadata-badge ${bpmMatch.quality === "high" ? "match-high" : ""}`;
+    badge.textContent = `${bpmMatch.matchPercent}%`;
+
+    bpmDiv.appendChild(label);
+    bpmDiv.appendChild(value);
+    bpmDiv.appendChild(bar);
+    bpmDiv.appendChild(badge);
+
+    container.appendChild(bpmDiv);
+  }
+
+  // Energy Level
+  if (Number.isFinite(resultFeatures.energy)) {
+    const energyDiv = document.createElement("div");
+    energyDiv.className = "metadata-metric";
+
+    const label = document.createElement("div");
+    label.className = "metadata-label";
+    label.textContent = "Energy";
+
+    const energy = computeEnergyLevel(resultFeatures.energy);
+    if (energy) {
+      const value = document.createElement("div");
+      value.className = "metadata-value";
+      value.textContent = `${energy.level}/5`;
+
+      const bar = document.createElement("div");
+      bar.className = "metadata-bar";
+
+      const fill = document.createElement("div");
+      fill.className = "metadata-bar-fill";
+      fill.style.width = `${energy.raw}%`;
+
+      bar.appendChild(fill);
+
+      energyDiv.appendChild(label);
+      energyDiv.appendChild(value);
+      energyDiv.appendChild(bar);
+
+      container.appendChild(energyDiv);
+    }
+  }
+
+  // Danceability
+  if (Number.isFinite(resultFeatures.danceability)) {
+    const danceDiv = document.createElement("div");
+    danceDiv.className = "metadata-metric";
+
+    const label = document.createElement("div");
+    label.className = "metadata-label";
+    label.textContent = "Dance";
+
+    const value = document.createElement("div");
+    value.className = "metadata-value";
+    value.textContent = `${Math.round(resultFeatures.danceability * 100)}%`;
+
+    const bar = document.createElement("div");
+    bar.className = "metadata-bar";
+
+    const fill = document.createElement("div");
+    fill.className = "metadata-bar-fill";
+    fill.style.width = `${resultFeatures.danceability * 100}%`;
+
+    bar.appendChild(fill);
+
+    danceDiv.appendChild(label);
+    danceDiv.appendChild(value);
+    danceDiv.appendChild(bar);
+
+    container.appendChild(danceDiv);
+  }
+
+  return container;
+}
+async function renderSearchResults(tracks, seedTrack = null) {
   elements.searchResults.innerHTML = "";
 
   if (!tracks.length) {
     clearSearchResults("No tracks found. Try a different song/artist phrase.");
     return;
+  }
+
+  // Fetch audio features for metadata display if we have a seed track
+  let audioFeatures = {};
+  if (seedTrack) {
+    try {
+      const accessToken = elements.accessToken.value.trim();
+      const trackIds = [seedTrack.id, ...tracks.map(t => t.id)];
+      audioFeatures = await fetchAudioFeatures(accessToken, trackIds);
+    } catch (error) {
+      logStatus(`Could not load audio features for metadata: ${error.message}`);
+    }
   }
 
   tracks.forEach((track) => {
@@ -800,21 +1601,23 @@ function renderSearchResults(tracks) {
     const album = track.albumName || "Unknown album";
     meta.textContent = `${artists} • ${album} • ${formatDurationMs(track.durationMs)}`;
 
-    const useButton = document.createElement("button");
-    useButton.type = "button";
-    useButton.textContent = "Use This Track";
-    useButton.addEventListener("click", () => {
-      setTrackInput(track.uri);
-      logStatus(
-        `Selected "${track.name}" (${track.uri}) into Track URI. Queue from URI or use Quick Actions.`
-      );
-    });
+    card.appendChild(title);
+    card.appendChild(meta);
+
+    // Add metadata display if we have audio features
+    if (seedTrack && Object.keys(audioFeatures).length > 0) {
+      const metadataDisplay = createMetadataDisplay(seedTrack, track, audioFeatures);
+      if (metadataDisplay) {
+        card.appendChild(metadataDisplay);
+      }
+    }
 
     const playNowButton = document.createElement("button");
     playNowButton.type = "button";
     playNowButton.textContent = "Play Now";
     playNowButton.addEventListener("click", async () => {
       setTrackInput(track.uri);
+      elements.offsetSeconds.value = "0";
       logStatus(`Play-now from search result: ${track.name}.`);
       await handlePlayNowClick(track.uri);
     });
@@ -839,13 +1642,10 @@ function renderSearchResults(tracks) {
 
     const actions = document.createElement("div");
     actions.className = "result-actions";
-    actions.appendChild(useButton);
     actions.appendChild(playNowButton);
     actions.appendChild(queueButton);
     actions.appendChild(queueSeekButton);
 
-    card.appendChild(title);
-    card.appendChild(meta);
     card.appendChild(actions);
     elements.searchResults.appendChild(card);
   });
@@ -1240,10 +2040,11 @@ function renderHeroVisualizerFrame() {
     if (segment) {
       const levels = computeSongSpectrumLevels(segment, heroVisualizerBars.length);
       for (let index = 0; index < heroVisualizerBars.length; index += 1) {
-        const target = clamp((levels[index] ?? 0) * motionBoost, 0.04, 1);
+        const band = getInstrumentBand(index, heroVisualizerBars.length);
+        const target = clamp((levels[index] ?? 0) * motionBoost * band.sensitivity, 0.04, 1);
         const previous = heroVisualizerBarLevels[index] ?? 0.12;
-        const attack = target > previous ? 0.36 : 0.2;
-        const smoothed = previous + (target - previous) * attack;
+        const attack = (target > previous ? 0.36 : 0.2) * (target > previous ? band.attackMul : band.releaseMul);
+        const smoothed = previous + (target - previous) * clamp(attack, 0.06, 0.95);
         heroVisualizerBarLevels[index] = smoothed;
 
         const bar = heroVisualizerBars[index];
@@ -1265,10 +2066,11 @@ function renderHeroVisualizerFrame() {
       seed
     );
     for (let index = 0; index < heroVisualizerBars.length; index += 1) {
-      const target = clamp((rawLevels[index] ?? 0) * motionBoost, 0.04, 1);
+      const band = getInstrumentBand(index, heroVisualizerBars.length);
+      const target = clamp((rawLevels[index] ?? 0) * motionBoost * band.sensitivity, 0.04, 1);
       const previous = heroVisualizerBarLevels[index] ?? 0.12;
-      const attack = target > previous ? 0.36 : 0.2;
-      const smoothed = previous + (target - previous) * attack;
+      const attack = (target > previous ? 0.36 : 0.2) * (target > previous ? band.attackMul : band.releaseMul);
+      const smoothed = previous + (target - previous) * clamp(attack, 0.06, 0.95);
       heroVisualizerBarLevels[index] = smoothed;
 
       const bar = heroVisualizerBars[index];
@@ -1302,11 +2104,12 @@ function renderHeroVisualizerFrame() {
         count += 1;
       }
       const average = count > 0 ? sum / count : 0;
-      const normalized = clamp(average / 255, 0, 1);
+      const band = getInstrumentBand(index, heroVisualizerBars.length);
+      const normalized = clamp((average / 255) * band.sensitivity, 0, 1);
 
       const previous = heroVisualizerBarLevels[index] ?? 0.2;
-      const attack = normalized > previous ? 0.42 : 0.18;
-      const smoothed = previous + (normalized - previous) * attack;
+      const attack = (normalized > previous ? 0.42 : 0.18) * (normalized > previous ? band.attackMul : band.releaseMul);
+      const smoothed = previous + (normalized - previous) * clamp(attack, 0.06, 0.95);
       heroVisualizerBarLevels[index] = smoothed;
       const scaleY = clamp(0.08 + smoothed * 1.12 * motionBoost, 0.08, 1);
 
@@ -1346,54 +2149,138 @@ function startHeroVisualizer() {
 }
 
 function resetLyricCaptionFade() {
-  lyricFadeGeneration += 1;
-  if (lyricFadeTimerId !== null) {
-    window.clearTimeout(lyricFadeTimerId);
-    lyricFadeTimerId = null;
+  lyricsListSignature = "";
+  lastLyricVisualFingerprint = "";
+  lastLyricMarqueeText = "";
+  lyricsPlaceholderFadeGeneration += 1;
+  if (elements.nowPlayingLyricsStage) {
+    elements.nowPlayingLyricsStage.style.opacity = "1";
   }
-  lyricCaptionDisplayed = "";
-  if (elements.nowPlayingLyricLine) {
-    elements.nowPlayingLyricLine.style.opacity = "1";
+  if (elements.nowPlayingLyricCurrent) {
+    elements.nowPlayingLyricCurrent.style.transition = "";
+    elements.nowPlayingLyricCurrent.style.opacity = "1";
+  }
+  hideLyricsTransitionOverlay();
+}
+
+function getLyricOffsetMs() {
+  return clamp(Number(elements.lyricOffsetMs?.value) || 0, -8000, 8000);
+}
+
+function buildLyricsListSignature(lines, uri) {
+  return `${uri}|${lines.map((l) => `${l.startMs}:${l.text}`).join("‖")}`;
+}
+
+function buildEstimatedTimedLinesFromChunks(chunks, durationMs) {
+  const d = Math.max(1, Number(durationMs) || 1);
+  const n = chunks.length;
+  if (n === 0) {
+    return [];
+  }
+  const slice = d / n;
+  return chunks
+    .map((text, i) => ({
+      startMs: Math.floor(i * slice),
+      text: String(text ?? "").trim()
+    }))
+    .filter((line) => line.text.length > 0);
+}
+
+function getUnifiedLyricLines(durationMs) {
+  if (activeTimedLyricLines.length > 0) {
+    return activeTimedLyricLines;
+  }
+  if (activeLyricChunks.length > 0) {
+    return buildEstimatedTimedLinesFromChunks(activeLyricChunks, durationMs);
+  }
+  return [];
+}
+
+/** Prefer later line when pre-roll overlaps previous line’s tail (fade-in before sing). */
+function findLyricDisplayIndex(lines, progressMs, fadeInMs, durationMs) {
+  if (!lines.length) {
+    return -1;
+  }
+  const d = Math.max(1, Number(durationMs) || 1);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const start = Math.max(0, lines[i].startMs - fadeInMs);
+    const end = i + 1 < lines.length ? lines[i + 1].startMs : d;
+    if (progressMs >= start && progressMs < end) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function fadeLyricsPlaceholderLine(text, { placeholder = true } = {}) {
+  const cur = elements.nowPlayingLyricCurrent;
+  if (!cur) {
+    return;
+  }
+  const gen = (lyricsPlaceholderFadeGeneration += 1);
+  cur.classList.toggle("is-placeholder", Boolean(placeholder));
+  cur.style.transition = "opacity 0.48s ease";
+  cur.style.opacity = "0";
+  cur.style.animation = "none";
+  lastLyricMarqueeText = "";
+
+  window.setTimeout(() => {
+    if (gen !== lyricsPlaceholderFadeGeneration) {
+      return;
+    }
+    cur.textContent = text || "\u00a0";
+    window.requestAnimationFrame(() => {
+      if (gen !== lyricsPlaceholderFadeGeneration) {
+        return;
+      }
+      cur.style.opacity = "1";
+    });
+  }, 460);
+}
+
+function showLyricsPlaceholderMessage(message) {
+  const text = String(message ?? "");
+  const fp = `placeholder|${text}`;
+  if (fp === lastLyricVisualFingerprint) {
+    return;
+  }
+  lastLyricVisualFingerprint = fp;
+  lyricsListSignature = fp;
+  fadeLyricsPlaceholderLine(text, { placeholder: true });
+}
+
+function hideLyricsTransitionOverlay() {
+  const el = elements.nowPlayingLyricsTransition;
+  const stage = elements.nowPlayingLyricsStage;
+  if (el) {
+    el.classList.remove("is-visible");
+    el.hidden = true;
+    el.textContent = "";
+  }
+  if (stage) {
+    stage.style.opacity = "1";
   }
 }
 
-function setLyricCaption(line) {
-  const nextLine = String(line ?? "");
-
-  if (!elements.nowPlayingLyricLine) {
+function updateLyricsTransitionOverlay(remainingMs) {
+  const el = elements.nowPlayingLyricsTransition;
+  const stage = elements.nowPlayingLyricsStage;
+  if (!el || !stage) {
     return;
   }
-  if (nextLine === lyricCaptionDisplayed) {
+  const autopilotOn = Boolean(elements.djAutopilotEnabled?.checked);
+  const inPreDropWindow = remainingMs <= 20000 && remainingMs >= 15000;
+  if (!autopilotOn || !inPreDropWindow) {
+    hideLyricsTransitionOverlay();
     return;
   }
-
-  const el = elements.nowPlayingLyricLine;
-
-  if (lyricCaptionDisplayed === "") {
-    el.textContent = nextLine;
-    lyricCaptionDisplayed = nextLine;
-    el.style.opacity = "1";
-    return;
-  }
-
-  const generation = (lyricFadeGeneration += 1);
-  el.style.opacity = "0";
-  if (lyricFadeTimerId !== null) {
-    window.clearTimeout(lyricFadeTimerId);
-  }
-  lyricFadeTimerId = window.setTimeout(() => {
-    lyricFadeTimerId = null;
-    if (generation !== lyricFadeGeneration) {
-      return;
-    }
-    el.textContent = nextLine;
-    lyricCaptionDisplayed = nextLine;
-    window.requestAnimationFrame(() => {
-      if (generation === lyricFadeGeneration) {
-        el.style.opacity = "1";
-      }
-    });
-  }, 220);
+  const nextName = latestRecommendationPlan?.selectedCandidate?.name;
+  el.hidden = false;
+  el.textContent = nextName
+    ? `Transitioning to "${nextName}"…`
+    : "Transitioning — next vibe…";
+  el.classList.add("is-visible");
+  stage.style.opacity = "0.22";
 }
 
 function normalizeLyricsText(rawLyrics) {
@@ -1435,10 +2322,18 @@ function normalizeTimedLyricLines(rawLines) {
     return [];
   }
   return rawLines
-    .map((line) => ({
-      startMs: Number(line?.startMs),
-      text: String(line?.text ?? "").trim()
-    }))
+    .map((line) => {
+      const startMsDirect = Number(line?.startMs);
+      const timeSec = Number(line?.time ?? line?.timeSeconds);
+      let startMs = startMsDirect;
+      if (!Number.isFinite(startMs) && Number.isFinite(timeSec)) {
+        startMs = timeSec * 1000;
+      }
+      return {
+        startMs,
+        text: String(line?.text ?? "").trim()
+      };
+    })
     .filter((line) => Number.isFinite(line.startMs) && line.startMs >= 0 && line.text.length > 0)
     .sort((a, b) => a.startMs - b.startMs);
 }
@@ -1460,40 +2355,84 @@ function getLyricCacheKey(track) {
   return `${track?.uri ?? ""}::${track?.name ?? ""}::${artist}`;
 }
 
-function applyLyricCaptionForProgress(progressMs, durationMs, isPlaying) {
+function applyLyricCaptionForProgress(progressMs, durationMs, isPlaying, remainingMs) {
   const safeDurationMs = Math.max(1, Number(durationMs) || 1);
-  const safeProgressMs = Math.max(0, Math.min(safeDurationMs, Number(progressMs) || 0));
+  const safeProgressRaw = Math.max(0, Math.min(safeDurationMs, Number(progressMs) || 0));
+  const remaining =
+    remainingMs !== undefined && remainingMs !== null
+      ? Math.max(0, Number(remainingMs) || 0)
+      : Math.max(0, safeDurationMs - safeProgressRaw);
 
-  if (activeTimedLyricLines.length > 0) {
-    let selected = activeTimedLyricLines[0];
-    for (const line of activeTimedLyricLines) {
-      if (line.startMs <= safeProgressMs) {
-        selected = line;
-      } else {
-        break;
-      }
-    }
-    const timedLabel = isPlaying ? `${activeLyricSource} (timed)` : `${activeLyricSource} (timed paused)`;
-    setLyricCaption(selected.text, timedLabel);
+  updateLyricsTransitionOverlay(remaining);
+
+  if (!elements.nowPlayingLyricCurrent) {
     return;
   }
 
-  if (!activeLyricChunks.length) {
-    if (activeLyricFetchTrackUri && activeLyricFetchTrackUri === activeLyricTrackUri) {
-      setLyricCaption("Loading lyric captions...", "loading");
-    } else {
-      setLyricCaption("No lyrics available for this track.", activeLyricSource || "unavailable");
+  const offset = getLyricOffsetMs();
+  const adjustedProgress = clamp(safeProgressRaw + offset, 0, safeDurationMs);
+
+  const isLoading =
+    activeLyricSource === "loading" ||
+    (Boolean(activeLyricFetchTrackUri) && activeLyricFetchTrackUri === activeLyricTrackUri);
+  if (isLoading) {
+    if (lastLyricVisualFingerprint !== "__loading__") {
+      lastLyricVisualFingerprint = "__loading__";
+      fadeLyricsPlaceholderLine("Loading lyric captions...", { placeholder: true });
     }
     return;
   }
 
-  const ratio = safeProgressMs / safeDurationMs;
-  const chunkIndex = Math.max(
-    0,
-    Math.min(activeLyricChunks.length - 1, Math.floor(ratio * activeLyricChunks.length))
+  const lines = getUnifiedLyricLines(safeDurationMs);
+  if (lines.length === 0) {
+    const emptyMsg =
+      activeLyricSource === "unavailable"
+        ? ""
+        : "Connect Spotify and hit play — lyrics appear here.";
+    const fpEmpty = `empty|${emptyMsg}|${activeLyricSource}`;
+    if (fpEmpty !== lastLyricVisualFingerprint) {
+      lastLyricVisualFingerprint = fpEmpty;
+      fadeLyricsPlaceholderLine(emptyMsg, { placeholder: true });
+    }
+    return;
+  }
+
+  const sig = buildLyricsListSignature(lines, activeLyricTrackUri);
+  if (sig !== lyricsListSignature) {
+    lyricsListSignature = sig;
+    lastLyricVisualFingerprint = "";
+  }
+
+  const cur = elements.nowPlayingLyricCurrent;
+  if (cur.classList.contains("is-placeholder")) {
+    lyricsPlaceholderFadeGeneration += 1;
+  }
+  cur.classList.remove("is-placeholder");
+  cur.style.transition = "none";
+
+  const activeIndex = findLyricDisplayIndex(
+    lines,
+    adjustedProgress,
+    LYRIC_LINE_FADE_IN_MS,
+    safeDurationMs
   );
-  const stateLabel = isPlaying ? activeLyricSource : `${activeLyricSource} (paused)`;
-  setLyricCaption(activeLyricChunks[chunkIndex], stateLabel);
+  const line = activeIndex >= 0 ? lines[activeIndex] : null;
+  const lineText = line ? String(line.text ?? "").trim() || "\u00a0" : "\u00a0";
+  cur.textContent = lineText;
+  cur.style.opacity = line ? "1" : "0";
+  applyLyricMarqueeAnimation(cur, lineText);
+}
+
+function applyLyricMarqueeAnimation(el, text) {
+  if (text === lastLyricMarqueeText) {
+    return;
+  }
+  lastLyricMarqueeText = text;
+  const durationSec = clamp(text.length * 0.115, 6, 26) + 2;
+  el.style.animation = "none";
+  // Force reflow so the animation restarts from the beginning for the new line.
+  void el.offsetWidth;
+  el.style.animation = `heroLyricsMarquee ${durationSec.toFixed(2)}s linear infinite`;
 }
 
 async function loadLyricsForTrack(track, accessToken) {
@@ -1502,7 +2441,15 @@ async function loadLyricsForTrack(track, accessToken) {
     activeLyricChunks = [];
     activeTimedLyricLines = [];
     activeLyricSource = "unavailable";
-    setLyricCaption("No lyrics available for this track.", activeLyricSource);
+    showLyricsPlaceholderMessage("");
+    return;
+  }
+
+  if (getSelectedProvider() !== "spotify") {
+    activeLyricChunks = [];
+    activeTimedLyricLines = [];
+    activeLyricSource = "unavailable";
+    showLyricsPlaceholderMessage("Synced lyrics are available when Spotify is the provider.");
     return;
   }
 
@@ -1515,10 +2462,13 @@ async function loadLyricsForTrack(track, accessToken) {
       activeLyricChunks = Array.isArray(cached.chunks) ? cached.chunks : [];
       activeTimedLyricLines = normalizeTimedLyricLines(cached.timedLines);
       activeLyricSource = cached.source || "cached";
+      const d0 = Number(nowPlayingTickerState?.durationMs) || 1;
+      const p0 = Math.max(0, Number(nowPlayingTickerState?.baseProgressMs) || 0);
       applyLyricCaptionForProgress(
-        nowPlayingTickerState?.baseProgressMs ?? 0,
-        nowPlayingTickerState?.durationMs ?? 1,
-        Boolean(nowPlayingTickerState?.isPlaying)
+        p0,
+        d0,
+        Boolean(nowPlayingTickerState?.isPlaying),
+        Math.max(0, d0 - p0)
       );
     }
     return;
@@ -1529,7 +2479,7 @@ async function loadLyricsForTrack(track, accessToken) {
     activeLyricChunks = [];
     activeTimedLyricLines = [];
     activeLyricSource = "loading";
-    setLyricCaption("Loading lyric captions...", "loading");
+    showLyricsPlaceholderMessage("Loading lyric captions...");
   }
 
   const artistName = (track?.artists ?? [])[0]?.name ?? "";
@@ -1561,10 +2511,13 @@ async function loadLyricsForTrack(track, accessToken) {
     activeLyricChunks = chunks;
     activeTimedLyricLines = timedLines;
     activeLyricSource = source;
+    const d1 = Number(nowPlayingTickerState?.durationMs) || 1;
+    const p1 = Math.max(0, Number(nowPlayingTickerState?.baseProgressMs) || 0);
     applyLyricCaptionForProgress(
-      nowPlayingTickerState?.baseProgressMs ?? 0,
-      nowPlayingTickerState?.durationMs ?? 1,
-      Boolean(nowPlayingTickerState?.isPlaying)
+      p1,
+      d1,
+      Boolean(nowPlayingTickerState?.isPlaying),
+      Math.max(0, d1 - p1)
     );
   } catch {
     if (activeLyricTrackUri !== trackUri) {
@@ -1573,7 +2526,7 @@ async function loadLyricsForTrack(track, accessToken) {
     activeLyricChunks = [];
     activeTimedLyricLines = [];
     activeLyricSource = "unavailable";
-    setLyricCaption("No lyrics available for this track.", activeLyricSource);
+    showLyricsPlaceholderMessage("");
   } finally {
     if (activeLyricFetchTrackUri === trackUri) {
       activeLyricFetchTrackUri = "";
@@ -1605,7 +2558,7 @@ function renderNowPlayingEmpty(message = "Waiting for the Vibe…") {
         ? "Connect your account, then press play in Spotify."
         : "Playback from Spotify will show up here.";
   elements.nowPlayingAlbumHero.textContent = "";
-  setLyricCaption("Connect Spotify and hit play — lyrics appear here.");
+  showLyricsPlaceholderMessage("Connect Spotify and hit play — lyrics appear here.");
   for (let i = 0; i < heroVisualizerBars.length; i += 1) {
     const bar = heroVisualizerBars[i];
     bar.style.transform = "scaleY(0.12)";
@@ -1637,7 +2590,7 @@ function applyNowPlayingProgress(durationMs, progressMs, isPlaying) {
   elements.nowPlayingRemainingText.textContent = isPlaying
     ? `remaining ${formatMs(remainingMs)}`
     : `paused at ${formatMs(safeProgressMs)}`;
-  applyLyricCaptionForProgress(safeProgressMs, safeDurationMs, isPlaying);
+  applyLyricCaptionForProgress(safeProgressMs, safeDurationMs, isPlaying, remainingMs);
 }
 
 function stopNowPlayingTicker() {
@@ -1704,7 +2657,7 @@ function renderNowPlaying(playbackPayload) {
     activeLyricChunks = [];
     activeTimedLyricLines = [];
     activeLyricSource = "loading";
-    setLyricCaption("Loading lyric captions...", "loading");
+    showLyricsPlaceholderMessage("Loading lyric captions...");
     loadLyricsForTrack(item, elements.accessToken.value.trim());
   }
   if (trackId && trackId !== activeSongSpectrumTrackId) {
@@ -1736,7 +2689,7 @@ function renderNowPlaying(playbackPayload) {
 
 async function getPlaybackState(
   accessToken,
-  { force = false, cacheTtlMs = PLAYBACK_STATE_CACHE_TTL_MS } = {}
+  { cacheTtlMs = PLAYBACK_STATE_CACHE_TTL_MS } = {}
 ) {
   const token = String(accessToken ?? "").trim();
   if (!token) {
@@ -1744,7 +2697,6 @@ async function getPlaybackState(
   }
 
   const isFresh =
-    !force &&
     playbackStateCache.payload &&
     playbackStateCache.token === token &&
     Date.now() - playbackStateCache.fetchedAtMs <= Math.max(0, cacheTtlMs);
@@ -1895,8 +2847,7 @@ async function runAutopilotTick() {
     }
 
     const playbackState = await getPlaybackState(accessToken, {
-      force: true,
-      cacheTtlMs: 250
+      cacheTtlMs: LIVE_ACTION_CACHE_TTL_MS
     });
     const playback = playbackState?.playback;
     const track = playback?.item;
@@ -1985,8 +2936,7 @@ async function runFlowInjectionWatcherTick() {
     }
 
     const playbackState = await getPlaybackState(accessToken, {
-      force: true,
-      cacheTtlMs: 200
+      cacheTtlMs: LIVE_ACTION_CACHE_TTL_MS
     });
     const currentUri = playbackState?.playback?.item?.uri;
     if (!currentUri) {
@@ -2042,10 +2992,11 @@ async function armFlowInjectionForPlan(plan, bpmMatchPercent) {
     )
   );
 
-  await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
+  const flowQueueResult = await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
     trackUri: selected.uri,
     deviceId: deviceId || undefined
   });
+  persistResolvedSpotifyDevice(flowQueueResult);
 
   pendingFlowInjection = {
     sourceTrackUri: current.uri,
@@ -2053,7 +3004,7 @@ async function armFlowInjectionForPlan(plan, bpmMatchPercent) {
     targetTrackId: selected.id,
     targetTrackName: selected.name ?? selected.uri,
     positionMs,
-    deviceId: deviceId || null
+    deviceId: flowQueueResult?.deviceId || deviceId || null
   };
 
   setFlowInjectionIndicator(`Flow boost · ${Math.round(bpmMatchPercent)}% BPM match`);
@@ -2287,16 +3238,19 @@ function saveInputsToLocalStorage() {
     DJ_AUTOPILOT_ENABLED_KEY,
     elements.djAutopilotEnabled.checked ? "true" : "false"
   );
-  localStorage.setItem(
-    CONTEXT_MOOD_LEVEL_KEY,
-    String(Math.round(Number(elements.contextMoodLevel.value || 50)))
-  );
+  localStorage.setItem(CONTEXT_MOOD_VALENCE_KEY, String(Math.round(moodPadState.valence)));
+  localStorage.setItem(CONTEXT_MOOD_ENERGY_KEY, String(Math.round(moodPadState.energy)));
   if (elements.contextNostalgiaSlider) {
     localStorage.setItem(
       CONTEXT_NOSTALGIA_SLIDER_KEY,
       String(Math.round(Number(elements.contextNostalgiaSlider.value || 50)))
     );
   }
+  if (elements.lyricOffsetMs) {
+    localStorage.setItem(LYRIC_OFFSET_MS_KEY, String(Number(elements.lyricOffsetMs.value) || 0));
+  }
+  localStorage.setItem(LISTENER_AGE_KEY, elements.listenerAge.value.trim());
+  localStorage.setItem(LISTENER_GENDER_KEY, elements.listenerGender.value);
 }
 
 function loadInputsFromLocalStorage() {
@@ -2322,13 +3276,25 @@ function loadInputsFromLocalStorage() {
     (localStorage.getItem(DJ_REMIX_MODE_KEY) ?? "false") === "true";
   elements.djAutopilotEnabled.checked =
     (localStorage.getItem(DJ_AUTOPILOT_ENABLED_KEY) ?? "false") === "true";
-  elements.contextMoodLevel.value = localStorage.getItem(CONTEXT_MOOD_LEVEL_KEY) ?? "50";
+  setMoodPadPosition(
+    Number(localStorage.getItem(CONTEXT_MOOD_VALENCE_KEY) ?? 50),
+    Number(localStorage.getItem(CONTEXT_MOOD_ENERGY_KEY) ?? 50),
+    { persist: false }
+  );
   if (elements.contextNostalgiaSlider) {
     elements.contextNostalgiaSlider.value =
       localStorage.getItem(CONTEXT_NOSTALGIA_SLIDER_KEY) ?? "50";
   }
+  if (elements.lyricOffsetMs) {
+    const savedOff = localStorage.getItem(LYRIC_OFFSET_MS_KEY);
+    elements.lyricOffsetMs.value =
+      savedOff !== null && savedOff !== "" ? String(savedOff) : "0";
+  }
   localStorage.removeItem("spotify_helper_context_gender");
   localStorage.removeItem("spotify_helper_context_account_age_years");
+  elements.listenerAge.value = localStorage.getItem(LISTENER_AGE_KEY) ?? "";
+  elements.listenerGender.value = localStorage.getItem(LISTENER_GENDER_KEY) ?? "unspecified";
+  updateLocationStatusFromStorage();
 }
 
 function applyTokensFromUrlIfPresent() {
@@ -2358,6 +3324,7 @@ function applyTokensFromUrlIfPresent() {
   }
   saveInputsToLocalStorage();
   refreshSpotifyProfileContext({ silent: true });
+  loadPersonalizationData({ silent: true });
   if (hashAuthError) {
     logStatus(`Spotify connect failed: ${hashAuthError}`);
     setActionInlineStatus(`Spotify connect failed: ${hashAuthError}`, "error");
@@ -2391,15 +3358,10 @@ function updateAutoSeekUi() {
 
   if (!providerSupported) {
     setActionButtonsDisabled(true);
-    elements.quickQueueAndSeekButton.textContent = "Queue + Auto Seek";
     return;
   }
 
   setActionButtonsDisabled(false);
-  const queueSeekLabel = enabled
-    ? "Queue + Auto Seek"
-    : "Queue Song (No Seek)";
-  elements.quickQueueAndSeekButton.textContent = queueSeekLabel;
 }
 
 function updateProviderUi() {
@@ -2409,27 +3371,25 @@ function updateProviderUi() {
   const hasAccessToken = Boolean(elements.accessToken.value.trim());
 
   elements.accessTokenLabel.textContent = `${providerName} Access Token`;
-  elements.connectSpotifyButton.textContent = hasAccessToken
-    ? "Reconnect Spotify"
-    : "Connect Spotify";
+  elements.connectSpotifyButtonLabel.textContent =
+    hasAccessToken && providerSupported ? "Reconnect Spotify" : "Connect Spotify";
+  elements.connectSpotifyHint.textContent =
+    hasAccessToken && providerSupported
+      ? "Connected. Reconnect if you want to refresh scopes or switch accounts."
+      : "Recommended first step. You only need to authorize once.";
 
   if (providerSupported) {
     elements.providerStatus.textContent =
-      "Spotify support is active. SoundCloud and Apple Music UI is staged for future integration.";
+      "Spotify support is active. SoundCloud, Apple Music, YouTube Music, and Tidal UI is staged for future integration.";
     elements.providerStatus.style.color = "#9ff6cd";
-    elements.connectSpotifyHint.textContent = hasAccessToken
-      ? "Connected. Reconnect if you want to refresh scopes or switch accounts."
-      : "Recommended first step. You only need to authorize once.";
   } else {
     elements.providerStatus.textContent = `${providerName} integration is not wired yet. Use Spotify to run queue and seek today.`;
     elements.providerStatus.style.color = "#ffd3a1";
-    elements.connectSpotifyHint.textContent = `${providerName} connect is coming soon.`;
     stopPolling();
     clearPendingQueueTarget();
   }
 
   elements.accessToken.disabled = !providerSupported;
-  elements.connectSpotifyButton.disabled = !providerSupported;
   elements.refreshToken.disabled = !providerSupported;
   elements.refreshTokenButton.disabled = !providerSupported;
   elements.trackUri.disabled = !providerSupported;
@@ -2440,9 +3400,15 @@ function updateProviderUi() {
   elements.refreshNowPlayingButton.disabled = !providerSupported;
   elements.djRemixMode.disabled = !providerSupported;
   elements.djAutopilotEnabled.disabled = !providerSupported;
-  elements.contextMoodLevel.disabled = !providerSupported;
+  elements.moodPad?.setAttribute("aria-disabled", String(!providerSupported));
+  if (elements.moodPad) {
+    elements.moodPad.tabIndex = providerSupported ? 0 : -1;
+  }
   if (elements.contextNostalgiaSlider) {
     elements.contextNostalgiaSlider.disabled = !providerSupported;
+  }
+  if (elements.lyricOffsetMs) {
+    elements.lyricOffsetMs.disabled = !providerSupported;
   }
 
   if (!providerSupported) {
@@ -2477,6 +3443,7 @@ function updateProviderUi() {
   updateAutoSeekUi();
   updateDjAutopilotStatus();
   updateRecommendationButtons();
+  updateSmartQueueButtons();
   updatePlatformBetaBanner();
 }
 
@@ -2692,6 +3659,144 @@ async function apiRequest(path, method, accessToken, body, options = {}) {
 
 const universalPlayer = new UniversalPlayer("spotify", apiRequest);
 
+
+// Search filter and pagination UI handlers
+function updateSearchFilterElements() {
+  const filterPopularityEl = document.getElementById("filterPopularity");
+  const filterPopularityValueEl = document.getElementById("filterPopularityValue");
+  const clearFiltersBtn = document.getElementById("clearFiltersButton");
+
+  if (!filterPopularityEl || !clearFiltersBtn) return;
+
+  filterPopularityEl.addEventListener("input", () => {
+    const value = filterPopularityEl.value;
+    filterPopularityValueEl.textContent = value === "0" ? "All" : `${value}+`;
+    currentSearchPage = 1;
+    applySearchFiltersAndPaginate();
+  });
+
+  clearFiltersBtn.addEventListener("click", () => {
+    filterPopularityEl.value = "0";
+    filterPopularityValueEl.textContent = "All";
+    currentSearchPage = 1;
+    applySearchFiltersAndPaginate();
+  });
+}
+
+function getActiveSearchFilters() {
+  const filterPopularityEl = document.getElementById("filterPopularity");
+  const filters = {};
+
+  if (filterPopularityEl && Number(filterPopularityEl.value) > 0) {
+    filters.minPopularity = Number(filterPopularityEl.value);
+  }
+
+  return filters;
+}
+
+function updatePaginationControls(pagination) {
+  const paginationControls = document.getElementById("paginationControls");
+  const paginationInfo = document.getElementById("paginationInfo");
+  const prevBtn = document.getElementById("paginationPrevButton");
+  const nextBtn = document.getElementById("paginationNextButton");
+
+  if (!paginationControls || !pagination) return;
+
+  if (pagination.totalResults <= RESULTS_PER_PAGE) {
+    paginationControls.style.display = "none";
+    return;
+  }
+
+  paginationControls.style.display = "flex";
+  paginationInfo.textContent = `Page ${pagination.currentPage} of ${pagination.totalPages}`;
+
+  if (prevBtn) {
+    prevBtn.disabled = pagination.currentPage <= 1;
+    prevBtn.onclick = () => {
+      if (pagination.currentPage > 1) {
+        currentSearchPage = pagination.currentPage - 1;
+        applySearchFiltersAndPaginate();
+      }
+    };
+  }
+
+  if (nextBtn) {
+    nextBtn.disabled = pagination.currentPage >= pagination.totalPages;
+    nextBtn.onclick = () => {
+      if (pagination.currentPage < pagination.totalPages) {
+        currentSearchPage = pagination.currentPage + 1;
+        applySearchFiltersAndPaginate();
+      }
+    };
+  }
+}
+
+function updateSearchResultCount(count) {
+  const resultCountEl = document.getElementById("searchResultCount");
+  if (resultCountEl) {
+    const plural = count === 1 ? "track" : "tracks";
+    resultCountEl.textContent = `${count} ${plural}`;
+  }
+}
+
+let lastSearchQuery = "";
+let lastSearchFilters = {};
+let lastSearchResults = [];
+
+async function applySearchFiltersAndPaginate() {
+  const query = elements.trackSearchQuery.value.trim();
+  if (!query) return;
+
+  const filters = getActiveSearchFilters();
+  const cacheKey = getCacheKey(query, filters);
+
+  // Get cached results or use last search
+  let filteredResults = null;
+  if (lastSearchQuery === query && JSON.stringify(lastSearchFilters) === JSON.stringify(filters)) {
+    filteredResults = lastSearchResults;
+  } else {
+    const cached = getSearchResultsFromCache(query, filters);
+    if (cached) {
+      filteredResults = cached;
+    } else if (lastSearchQuery === query) {
+      // Apply filters to last results
+      filteredResults = getFilteredResults(lastSearchResults, filters);
+      cacheSearchResults(query, filters, filteredResults);
+    }
+  }
+
+  if (!filteredResults) return;
+
+  lastSearchQuery = query;
+  lastSearchFilters = filters;
+  lastSearchResults = filteredResults;
+
+  updateSearchResultCount(filteredResults.length);
+
+  const pagination = getPaginatedResults(filteredResults, currentSearchPage);
+  
+  // Fetch seed track for metadata
+  let seedTrack = null;
+  try {
+    const accessToken = elements.accessToken.value.trim();
+    const playbackState = await getPlaybackState(accessToken, { cacheTtlMs: 5000 });
+    const currentTrackData = playbackState?.playback?.item;
+    if (currentTrackData) {
+      seedTrack = {
+        id: currentTrackData.id,
+        name: currentTrackData.name,
+        artistNames: (currentTrackData.artists ?? []).map(a => a.name),
+        uri: currentTrackData.uri,
+        durationMs: currentTrackData.duration_ms
+      };
+    }
+  } catch (err) {
+    // Silent fail
+  }
+
+  await renderSearchResults(pagination.results, seedTrack);
+  updatePaginationControls(pagination);
+}
 function scheduleAutoSearch() {
   if (searchDebounceTimerId !== null) {
     window.clearTimeout(searchDebounceTimerId);
@@ -2727,9 +3832,81 @@ function scheduleAutoSearch() {
 
   searchDebounceTimerId = window.setTimeout(() => {
     searchTracks({ source: "auto" });
-  }, 350);
+  }, SEARCH_DEBOUNCE_MS);
 }
 
+
+// Search debouncing and caching for pagination feature
+let searchDebounceTimer = null;
+const SEARCH_DEBOUNCE_MS = 500;
+const searchResultsCache = new Map();
+let currentSearchPage = 1;
+const RESULTS_PER_PAGE = 20;
+
+function clearSearchDebounceTimer() {
+  if (searchDebounceTimer !== null) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+}
+
+function getCacheKey(query, filters = {}) {
+  return JSON.stringify({ query: query.toLowerCase(), filters });
+}
+
+function cacheSearchResults(query, filters, results) {
+  const key = getCacheKey(query, filters);
+  searchResultsCache.set(key, {
+    results,
+    cachedAtMs: Date.now()
+  });
+  // Keep cache size under 50 entries
+  if (searchResultsCache.size > 50) {
+    const firstKey = searchResultsCache.keys().next().value;
+    searchResultsCache.delete(firstKey);
+  }
+}
+
+function getSearchResultsFromCache(query, filters) {
+  const key = getCacheKey(query, filters);
+  const cached = searchResultsCache.get(key);
+  if (cached) {
+    return cached.results;
+  }
+  return null;
+}
+
+function clearSearchCache() {
+  searchResultsCache.clear();
+}
+
+function getFilteredResults(allResults, filters = {}) {
+  if (!filters || Object.keys(filters).length === 0) {
+    return allResults;
+  }
+
+  return allResults.filter(track => {
+    // Popularity filter
+    if (filters.minPopularity !== undefined && filters.minPopularity !== null) {
+      const trackPopularity = Number(track.popularity || 0);
+      if (trackPopularity < filters.minPopularity) return false;
+    }
+
+    // More filters can be added here when audio features are pre-fetched
+    return true;
+  });
+}
+
+function getPaginatedResults(allResults, page = 1) {
+  const startIdx = (page - 1) * RESULTS_PER_PAGE;
+  const endIdx = startIdx + RESULTS_PER_PAGE;
+  return {
+    results: allResults.slice(startIdx, endIdx),
+    totalResults: allResults.length,
+    totalPages: Math.ceil(allResults.length / RESULTS_PER_PAGE),
+    currentPage: page
+  };
+}
 async function searchTracks({ source = "manual" } = {}) {
   if (searchInFlight) {
     pendingSearchAfterInFlight = true;
@@ -2752,7 +3929,7 @@ async function searchTracks({ source = "manual" } = {}) {
   const query = elements.trackSearchQuery.value.trim();
 
   if (!accessToken) {
-    clearSearchResults("Connect Spotify in System config, then search.");
+    clearSearchResults("Connect Spotify in Settings, then search.");
     setSearchInlineStatus("Connect Spotify first to search.", "error");
     return;
   }
@@ -2787,7 +3964,7 @@ async function searchTracks({ source = "manual" } = {}) {
   try {
     const params = new URLSearchParams({
       q: query,
-      limit: "10"
+      limit: "20"
     });
     const payload = await apiRequest(
       `/auth/spotify/search/tracks?${params.toString()}`,
@@ -2795,7 +3972,34 @@ async function searchTracks({ source = "manual" } = {}) {
       accessToken
     );
 
-    renderSearchResults(payload?.tracks ?? []);
+    // Get current track for metadata display
+    let seedTrack = null;
+    try {
+      const playbackState = await getPlaybackState(accessToken, { cacheTtlMs: 5000 });
+      const currentTrackData = playbackState?.playback?.item;
+      if (currentTrackData) {
+        seedTrack = {
+          id: currentTrackData.id,
+          name: currentTrackData.name,
+          artistNames: (currentTrackData.artists ?? []).map(a => a.name),
+          uri: currentTrackData.uri,
+          durationMs: currentTrackData.duration_ms
+        };
+      }
+    } catch (err) {
+      // Silent fail - metadata is optional
+    }
+    await renderSearchResults(payload?.tracks ?? [], seedTrack);
+    
+    // Cache results for filter/pagination
+    lastSearchQuery = query;
+    lastSearchResults = payload?.tracks ?? [];
+    lastSearchFilters = {};
+    currentSearchPage = 1;
+    cacheSearchResults(query, {}, lastSearchResults);
+    updateSearchResultCount(lastSearchResults.length);
+    updatePaginationControls(getPaginatedResults(lastSearchResults, 1));
+    
     setSearchInlineStatus(
       `Found ${payload?.tracks?.length ?? 0} track(s).`,
       "success"
@@ -3191,10 +4395,11 @@ async function handleQueueAction({
       );
     }
 
-    await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
+    const queueResult = await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
       trackUri,
       deviceId: deviceId || undefined
     });
+    persistResolvedSpotifyDevice(queueResult);
     clearSearchUiAfterQueue({ preserveResults: true });
     logStatus("Search results kept so you can queue multiple tracks faster.");
 
@@ -3215,7 +4420,7 @@ async function handleQueueAction({
       trackUri,
       desiredOffsetMs,
       seekDelayMs,
-      deviceId: deviceId || null,
+      deviceId: queueResult?.deviceId || deviceId || null,
       smoothTransitionEnabled,
       smoothFadeDurationMs,
       mustSeeDifferentTrackFirst: false,
@@ -3257,16 +4462,8 @@ async function handleQueueAction({
   }
 }
 
-async function handleQueueOnlyClick() {
-  await handleQueueAction({ forceQueueOnly: true });
-}
-
 async function handleQueueFromUriClick() {
   await handleQueueAction({ forceQueueOnly: true });
-}
-
-async function handleQueueAndSeekClick() {
-  await handleQueueAction({ forceQueueOnly: false });
 }
 
 function getQuickTransportContext() {
@@ -3288,6 +4485,20 @@ function getQuickTransportContext() {
     accessToken,
     deviceId
   };
+}
+
+/** After play/queue, server may resolve a Connect device — save for next calls. */
+function persistResolvedSpotifyDevice(apiResult) {
+  const id = apiResult?.deviceId;
+  if (!id || typeof id !== "string" || !elements.deviceId) {
+    return;
+  }
+  elements.deviceId.value = id;
+  try {
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  } catch {
+    // ignore quota / private mode
+  }
 }
 
 async function handleQuickPauseResumeClick() {
@@ -3441,18 +4652,19 @@ async function handlePlayNowClick(trackUriOverride = null) {
     );
     const positionMs = Math.round(offsetSeconds * 1000);
 
-    await apiRequest("/auth/spotify/player/play-now", "PUT", accessToken, {
+    const playResult = await apiRequest("/auth/spotify/player/play-now", "PUT", accessToken, {
       trackUri,
       deviceId: deviceId || undefined,
       positionMs
     });
+    persistResolvedSpotifyDevice(playResult);
     invalidatePlaybackStateCache();
 
     stopPolling();
     clearPendingQueueTarget();
     clearSearchUiAfterQueue();
     hideFallback();
-    setActionInlineStatus(`Now playing at ${formatMs(positionMs)}.`, "success");
+    setActionInlineStatus("Now playing.", "success");
     logStatus(`Playing now: ${trackUri} at ${formatMs(positionMs)}.`);
   } catch (error) {
     const parsedOffset = Number(elements.offsetSeconds.value);
@@ -3551,6 +4763,48 @@ function handleConnectSpotifyClick() {
   window.location.assign("/auth/spotify/login");
 }
 
+function handleConnectProviderClick(providerValue) {
+  if (elements.provider.value !== providerValue) {
+    elements.provider.value = providerValue;
+    invalidatePlaybackStateCache();
+    updateProviderUi();
+    saveInputsToLocalStorage();
+  }
+  handleConnectSpotifyClick();
+}
+
+function handleUseLocationClick() {
+  if (!("geolocation" in navigator)) {
+    elements.locationStatus.textContent = "Location isn't available in this browser.";
+    return;
+  }
+  elements.locationStatus.textContent = "Requesting location permission...";
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const coords = {
+        lat: Math.round(position.coords.latitude * 100) / 100,
+        lon: Math.round(position.coords.longitude * 100) / 100
+      };
+      localStorage.setItem(USE_LOCATION_ENABLED_KEY, "true");
+      localStorage.setItem(USE_LOCATION_COORDS_KEY, JSON.stringify(coords));
+      elements.locationStatus.textContent =
+        "Location saved locally. Your Spotify profile region already drives regional tuning.";
+      logStatus("Location access granted and saved locally.");
+    },
+    (error) => {
+      elements.locationStatus.textContent = `Location request failed: ${error.message}`;
+    },
+    { enableHighAccuracy: false, timeout: 10000 }
+  );
+}
+
+function updateLocationStatusFromStorage() {
+  const enabled = localStorage.getItem(USE_LOCATION_ENABLED_KEY) === "true";
+  elements.locationStatus.textContent = enabled
+    ? "On — location saved locally on this device."
+    : "Off — region comes from your Spotify profile.";
+}
+
 async function handleDjRemixModeChange() {
   saveInputsToLocalStorage();
   await syncDjSessionMode();
@@ -3586,6 +4840,7 @@ async function handleGenerateRecommendationClick() {
   }
 
   recommendationInFlight = true;
+  showLoadingSpinner("Generating vibe...");
   updateRecommendationButtons();
   setRecommendationInlineStatus("Reading your queue and mood…", "info");
   elements.recommendationStatus.textContent = "Tuning into your session…";
@@ -3615,6 +4870,7 @@ async function handleGenerateRecommendationClick() {
     setRecommendationInlineStatus(`Recommendation failed: ${error.message}`, "error");
     logStatus(`Recommendation failed: ${error.message}`);
   } finally {
+    hideLoadingSpinner();
     recommendationInFlight = false;
     updateRecommendationButtons();
   }
@@ -3683,14 +4939,16 @@ async function handleQueueTopCandidatesClick() {
 
     setActionButtonsDisabled(true);
     recommendationInFlight = true;
-    updateRecommendationButtons();
+  showLoadingSpinner("Generating vibe...");
+  updateRecommendationButtons();
     setActionInlineStatus("Queueing top recommendations...", "info");
 
     for (const item of queuePlan) {
-      await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
+      const topQueueResult = await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
         trackUri: item.uri,
         deviceId: deviceId || undefined
       });
+      persistResolvedSpotifyDevice(topQueueResult);
     }
 
     const queueNames = queuePlan.map((item) => item.name).join(", ");
@@ -3702,13 +4960,85 @@ async function handleQueueTopCandidatesClick() {
     logStatus(`Could not queue top recommendations: ${error.message}`);
     setActionInlineStatus(`Could not queue top recommendations: ${error.message}`, "error");
   } finally {
+    hideLoadingSpinner();
     recommendationInFlight = false;
     setActionButtonsDisabled(false);
     updateRecommendationButtons();
   }
 }
 
+function updateSmartQueueButtons() {
+  const providerSupported = isProviderSupported(getSelectedProvider());
+  elements.queueSmartQueueButton.disabled = !providerSupported || smartQueueInFlight;
+}
+
+async function handleQueueSmartFlowClick() {
+  const provider = getSelectedProvider();
+  if (!isProviderSupported(provider)) {
+    const providerName = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+    setInlineStatus(
+      elements.smartQueueInlineStatus,
+      `${providerName} support is coming soon. Switch provider to Spotify for now.`,
+      "error"
+    );
+    return;
+  }
+
+  const accessToken = elements.accessToken.value.trim();
+  if (!accessToken) {
+    setInlineStatus(elements.smartQueueInlineStatus, "Connect Spotify first.", "error");
+    return;
+  }
+
+  const deviceId = elements.deviceId.value.trim();
+
+  smartQueueInFlight = true;
+  updateSmartQueueButtons();
+  setInlineStatus(elements.smartQueueInlineStatus, "Planning the flow…", "info");
+  elements.smartQueueStatus.textContent = "Ordering upcoming tracks for smooth transitions…";
+
+  try {
+    const plan = await apiRequest("/auth/spotify/dj/smart-queue", "POST", accessToken, {
+      sessionId: getOrCreateDjSessionId(),
+      userContext: buildUserContext(),
+      queueLength: 5
+    });
+
+    const queue = plan?.queue ?? [];
+    if (queue.length === 0) {
+      throw new Error("Could not build a smart queue from the current candidates.");
+    }
+
+    setInlineStatus(elements.smartQueueInlineStatus, `Queueing ${queue.length} tracks…`, "info");
+
+    for (const item of queue) {
+      if (!item.track?.uri) {
+        continue;
+      }
+      const queueResult = await apiRequest("/auth/spotify/player/queue", "POST", accessToken, {
+        trackUri: item.track.uri,
+        deviceId: deviceId || undefined
+      });
+      persistResolvedSpotifyDevice(queueResult);
+    }
+
+    elements.smartQueueStatus.textContent = `Queued ${queue.length} tracks ordered for BPM, key, and energy flow.`;
+    setInlineStatus(elements.smartQueueInlineStatus, `Queued ${queue.length} tracks in flow order.`, "success");
+    logStatus(`Queued smart queue: ${queue.length} tracks in flow order.`);
+  } catch (error) {
+    elements.smartQueueStatus.textContent = `Smart queue failed: ${error.message}`;
+    setInlineStatus(elements.smartQueueInlineStatus, `Smart queue failed: ${error.message}`, "error");
+    logStatus(`Smart queue failed: ${error.message}`);
+  } finally {
+    smartQueueInFlight = false;
+    updateSmartQueueButtons();
+  }
+}
+
 function bindEvents() {
+  for (const tab of document.querySelectorAll(".app-nav-tab")) {
+    tab.addEventListener("click", () => setActiveAppView(tab.dataset.view));
+  }
   elements.provider.addEventListener("change", () => {
     invalidatePlaybackStateCache();
     updateProviderUi();
@@ -3720,14 +5050,35 @@ function bindEvents() {
     handleQuickPauseResumeClick
   );
   elements.quickNextButton.addEventListener("click", handleQuickNextClick);
-  elements.connectSpotifyButton.addEventListener("click", handleConnectSpotifyClick);
+  elements.connectSpotifyButton.addEventListener("click", () =>
+    handleConnectProviderClick("spotify")
+  );
+  elements.connectSoundcloudButton.addEventListener("click", () =>
+    handleConnectProviderClick("soundcloud")
+  );
+  elements.connectAppleMusicButton.addEventListener("click", () =>
+    handleConnectProviderClick("apple_music")
+  );
+  elements.connectYoutubeMusicButton.addEventListener("click", () =>
+    handleConnectProviderClick("youtube_music")
+  );
+  elements.connectTidalButton.addEventListener("click", () =>
+    handleConnectProviderClick("tidal")
+  );
+  elements.useLocationButton.addEventListener("click", handleUseLocationClick);
+  elements.listenerAge.addEventListener("change", () => {
+    saveInputsToLocalStorage();
+    savePersonalizationData();
+  });
+  elements.listenerGender.addEventListener("change", () => {
+    saveInputsToLocalStorage();
+    savePersonalizationData();
+  });
   elements.nowPlayingVisualizer.addEventListener("click", handleEnableLiveSpectrumClick);
   elements.nowPlayingHeroBg.addEventListener("click", handleEnableLiveSpectrumClick);
   elements.nowPlayingHeroAlbumArt.addEventListener("click", handleEnableLiveSpectrumClick);
   elements.quickPlayNowButton.addEventListener("click", handlePlayNowClick);
   elements.queueFromUriButton.addEventListener("click", handleQueueFromUriClick);
-  elements.quickQueueOnlyButton.addEventListener("click", handleQueueOnlyClick);
-  elements.quickQueueAndSeekButton.addEventListener("click", handleQueueAndSeekClick);
   elements.refreshTokenButton.addEventListener("click", handleManualRefreshTokenClick);
   elements.refreshNowPlayingButton.addEventListener("click", handleRefreshNowPlayingClick);
   elements.generateRecommendationButton.addEventListener(
@@ -3746,16 +5097,57 @@ function bindEvents() {
     "click",
     handleQueueTopCandidatesClick
   );
+  elements.queueSmartQueueButton.addEventListener(
+    "click",
+    handleQueueSmartFlowClick
+  );
   elements.searchTracksButton.addEventListener("click", () =>
     searchTracks({ source: "manual" })
   );
-  elements.contextMoodLevel.addEventListener("input", () => {
-    updateEnvironmentContextBar();
-    saveInputsToLocalStorage();
-  });
+
+  // Initialize search filters and pagination UI
+  updateSearchFilterElements();
+  initMoodPad();
   elements.contextNostalgiaSlider?.addEventListener("input", () => {
     updateEnvironmentContextBar();
     saveInputsToLocalStorage();
+  });
+  elements.environmentContextBadges?.addEventListener("click", (event) => {
+    const badge = event.target.closest("[data-temp-display-cycle]");
+    if (!badge) {
+      return;
+    }
+    event.preventDefault();
+    cycleOutdoorTempDisplayUnit();
+  });
+  elements.environmentContextBadges?.addEventListener("keydown", (event) => {
+    const badge = event.target.closest("[data-temp-display-cycle]");
+    if (!badge) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      cycleOutdoorTempDisplayUnit();
+    }
+  });
+  elements.lyricOffsetMs?.addEventListener("input", () => {
+    saveInputsToLocalStorage();
+    if (nowPlayingTickerState) {
+      const d = Number(nowPlayingTickerState.durationMs) || 1;
+      const elapsed = nowPlayingTickerState.isPlaying
+        ? Date.now() - nowPlayingTickerState.renderedAtMs
+        : 0;
+      const p = Math.max(
+        0,
+        Math.min(d, Number(nowPlayingTickerState.baseProgressMs) + elapsed)
+      );
+      applyLyricCaptionForProgress(
+        p,
+        d,
+        Boolean(nowPlayingTickerState.isPlaying),
+        Math.max(0, d - p)
+      );
+    }
   });
   elements.accessToken.addEventListener("change", () => {
     saveInputsToLocalStorage();
@@ -3808,6 +5200,7 @@ function maybeResumePendingQueueWatcher() {
 
 function init() {
   getOrCreateDjSessionId();
+  setActiveAppView(getActiveAppView());
   ensureHeroVisualizerBars();
   loadInputsFromLocalStorage();
   applyTokensFromUrlIfPresent();
@@ -3823,10 +5216,14 @@ function init() {
   setRecommendationInlineStatus("");
   setActionInlineStatus("");
   bindEvents();
+  enhanceFormInputs();
   syncDjSessionMode();
   maybeResumePendingQueueWatcher();
   refreshNowPlaying({ silent: true });
   refreshSpotifyProfileContext({ silent: true });
+  loadPersonalizationData({ silent: true });
+  void refreshLiveEnvironmentSignals();
+  setInterval(() => void refreshLiveEnvironmentSignals(), ENV_SIGNALS_CACHE_TTL_MS);
   startNowPlayingPolling();
   if (elements.djAutopilotEnabled.checked) {
     startDjAutopilotLoop();
@@ -3834,3 +5231,189 @@ function init() {
 }
 
 init();
+
+// ============ DRAG-TO-SEEK, LYRICS PAUSE, AND PROGRESS HOVER BUBBLE ============
+
+// Track lyrics animation playback state
+let lyricsAnimationElement = null;
+
+// Intercept applyLyricMarqueeAnimation to add pause control
+const originalApplyLyricMarqueeAnimation = window.applyLyricMarqueeAnimation || function(){};
+window.applyLyricMarqueeAnimation = function(el, text, isPlaying) {
+  lyricsAnimationElement = el;
+  const durationSec = Math.max(6, Math.min(26, (text?.length || 0) * 0.115)) + 2;
+  el.style.animation = 'none';
+  void el.offsetWidth; // Force reflow
+  el.style.animation = `heroLyricsMarquee ${durationSec.toFixed(2)}s linear infinite`;
+  el.style.animationPlayState = isPlaying ? 'running' : 'paused';
+};
+
+// Listen for playback state changes to pause/resume lyrics
+const observer = new MutationObserver(() => {
+  const isPlayingNow = nowPlayingTickerState?.isPlaying;
+  if (lyricsAnimationElement && isPlayingNow !== undefined) {
+    lyricsAnimationElement.style.animationPlayState = isPlayingNow ? 'running' : 'paused';
+  }
+});
+
+observer.observe(document.body, { subtree: true, attributes: true });
+
+// Drag-to-seek with hover bubble
+(function initProgressBarWithHover() {
+  const progressShell = document.querySelector('.progress-shell');
+  if (!progressShell) return;
+  
+  let isDragging = false;
+  let hoverBubble = null;
+  
+  function createHoverBubble() {
+    if (!hoverBubble) {
+      hoverBubble = document.createElement('div');
+      hoverBubble.style.cssText = `
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        transform: translateX(-50%);
+        background: rgba(0, 209, 255, 0.95);
+        color: #ffffff;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+        pointer-events: none;
+        z-index: 100;
+        font-family: ui-monospace, monospace;
+        margin-bottom: 8px;
+      `;
+      progressShell.parentElement.style.position = 'relative';
+      progressShell.parentElement.appendChild(hoverBubble);
+    }
+    return hoverBubble;
+  }
+  
+  function updateBubble(e) {
+    const rect = progressShell.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    
+    const timeText = elements.nowPlayingProgressText?.textContent || '';
+    const [_, durationStr] = timeText.split(' / ');
+    if (!durationStr) return;
+    
+    const durationMs = parseTimeToMs(durationStr);
+    const seekMs = Math.round(durationMs * percentage);
+    const bubbleEl = createHoverBubble();
+    bubbleEl.textContent = formatMs(seekMs);
+    bubbleEl.style.left = `${clickX}px`;
+    bubbleEl.style.display = 'block';
+  }
+  
+  function hideBubble() {
+    if (hoverBubble) {
+      hoverBubble.style.display = 'none';
+    }
+  }
+  
+  progressShell.addEventListener('mousemove', updateBubble);
+  progressShell.addEventListener('mouseleave', hideBubble);
+  
+  progressShell.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    seekToClick(e);
+  });
+  
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    seekToClick(e);
+  });
+  
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    hideBubble();
+  });
+  
+  function seekToClick(e) {
+    const rect = progressShell.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    
+    const timeText = elements.nowPlayingProgressText?.textContent || '';
+    const [_, durationStr] = timeText.split(' / ');
+    if (!durationStr) return;
+    
+    const durationMs = parseTimeToMs(durationStr);
+    const seekMs = Math.round(durationMs * percentage);
+    
+    elements.nowPlayingProgressBar.style.width = `${(percentage * 100).toFixed(1)}%`;
+    elements.nowPlayingProgressText.textContent = `${formatMs(seekMs)} / ${durationStr}`;
+    
+    if (spotifyPlayer && typeof spotifyPlayer.seek === 'function') {
+      spotifyPlayer.seek(seekMs);
+    }
+  }
+  
+  function parseTimeToMs(timeStr) {
+    const parts = timeStr.split(':').map(p => parseInt(p, 10));
+    if (parts.length === 2) {
+      return (parts[0] * 60 + parts[1]) * 1000;
+    } else if (parts.length === 3) {
+      return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+    }
+    return 0;
+  }
+})();
+
+
+// ============ SEARCH DEBOUNCE & OPTIMIZATIONS ============
+let searchTimeout = null;
+const originalSearchTracks = window.searchTracks;
+
+window.searchTracks = function(query) {
+  clearTimeout(searchTimeout);
+  if (!query || query.length < 1) {
+    elements.searchResults.innerHTML = '<div class="result-empty">Type to search</div>';
+    return;
+  }
+  
+  // Show loading state
+  elements.searchResults.innerHTML = '<div class="result-empty">Searching...</div>';
+  
+  searchTimeout = setTimeout(() => {
+    originalSearchTracks(query);
+  }, 300); // Debounce API call by 300ms
+};
+
+// Cache audio analysis to avoid re-fetching
+const audioAnalysisCache = new Map();
+
+// Add connection retry logic
+let retryCount = 0;
+const maxRetries = 3;
+
+
+// ============ BETTER ERROR HANDLING & STATES ============
+function showLoadingState(element, message = 'Loading...') {
+  if (element) {
+    element.innerHTML = `<div style="text-align:center;opacity:0.6;padding:20px;">${message}</div>`;
+  }
+}
+
+function showErrorState(element, message = 'Something went wrong') {
+  if (element) {
+    element.innerHTML = `<div style="color:#ff6b6b;text-align:center;padding:20px;">${message}</div>`;
+  }
+}
+
+// Add retry logic to API calls
+async function callWithRetry(fn, maxAttempts = 3) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxAttempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+    }
+  }
+}
+
