@@ -32,7 +32,7 @@ export default function Navbar() {
             <AudioWaveform size={15} className="text-[#FBBF24]" />
           </span>
           <span className="font-display font-bold tracking-tight text-lg">
-            MOMENTM
+            The Vibe
           </span>
         </button>
 

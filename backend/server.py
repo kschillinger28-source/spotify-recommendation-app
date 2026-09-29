@@ -123,7 +123,7 @@ async def ask_the_vibe(input: VibeAskCreate):
     hour = input.hour if input.hour is not None else datetime.now(timezone.utc).hour
 
     system_message = (
-        "You are the recommendation algorithm inside MOMENTM, a music product that matches songs to the "
+        "You are the recommendation algorithm inside The Vibe, a music product that matches songs to the "
         "user's current moment on a 2D mood map (x = energy, 0 calm to 1 hype; y = valence, 0 melancholy to 1 euphoric). "
         f"Read the user's described moment and pick the ONE best fitting mood from exactly: {VIBE_MOOD_LIST}. "
         "Reply in EXACTLY this format and nothing before it:\n"

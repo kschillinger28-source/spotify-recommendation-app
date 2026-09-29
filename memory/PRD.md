@@ -1,4 +1,4 @@
-# PRD — MOMENTM ("The Vibe" Mood Orb site)
+# PRD — The Vibe (Mood Orb site)
 
 ## Original problem statement
 Add one creative, non-destructive interactive feature — "The Vibe" — to a music-tech site: a draggable glowing Mood Orb on a 2D valence–energy map. Hero gets a compact cursor-reactive version; a new playground section (`#the-vibe-playground`) gets a larger canvas with 6 labeled mood zones, lock-on-drop, morphing gradient, reshaping waveform, and a "Now playing" chip. Site story: a context-aware music recommendation algorithm that fixes playlists rotating the same 20 songs.
@@ -20,7 +20,7 @@ Add one creative, non-destructive interactive feature — "The Vibe" — to a mu
   - `TheVibe.jsx` — mounts: hero (desktop absolute bg layer + mobile 340px stage) and playground (620px canvas, zones, chip, sound toggle)
 - Backend: FastAPI + Motor; additive routes `POST /api/vibe-locks` (validated mood, 0–1 floats) and `GET /api/vibe-locks/summary`
 - Landing sections: Navbar, Hero (masked line-by-line reveal, parallax), Marquee, PlaygroundSection, Story (problem + treated Unsplash frames + 3 cards), Footer
-- Brand: MOMENTM; original SVG orb-wave logo used as favicon (`public/logo.svg`)
+- Brand: The Vibe; original SVG orb-wave logo used as favicon (`public/logo.svg`)
 
 ## Accessibility & edge cases (as briefed)
 - prefers-reduced-motion: no drift/drag; "Cycle mood" button + orb click cycles; springs jumped instantly

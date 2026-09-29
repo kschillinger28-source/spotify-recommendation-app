@@ -20,7 +20,7 @@ const CARDS = [
     icon: AudioWaveform,
     num: "03",
     title: "The vibe vector",
-    body: "MOMENTM scores every track on valence and energy, then matches the moment you're in. New songs, right context, zero skips.",
+    body: "The Vibe scores every track on valence and energy, then matches the moment you're in. New songs, right context, zero skips.",
   },
 ];
 

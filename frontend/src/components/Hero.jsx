@@ -85,7 +85,7 @@ export default function Hero() {
             transition={{ duration: 0.9, ease: EASE, delay: 0.6 }}
             className="mt-6 max-w-xl text-base md:text-lg text-white/60 leading-relaxed"
           >
-            MOMENTM scores every track on valence and energy, then matches it
+            The Vibe scores every track on valence and energy, then matches it
             to the moment you&rsquo;re actually in — not the same twenty songs
             on rotation since March. Drag the orb. Feel the algorithm.
           </motion.p>

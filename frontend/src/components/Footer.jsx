@@ -11,7 +11,7 @@ export default function Footer() {
               <AudioWaveform size={15} className="text-[#FBBF24]" />
             </span>
             <span className="font-display font-bold tracking-tight text-lg">
-              MOMENTM
+              The Vibe
             </span>
           </div>
           <p className="mt-4 text-sm text-white/50 max-w-sm leading-relaxed">
