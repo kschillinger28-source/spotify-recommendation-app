@@ -179,7 +179,10 @@ export default function TheVibe({ variant = "playground", className = "" }) {
               <div
                 key={m.id}
                 className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-                style={{ left: `${m.energy * 100}%`, top: `${(1 - m.valence) * 100}%` }}
+                style={{
+                  left: `clamp(52px, ${(m.energy * 100).toFixed(2)}%, calc(100% - 52px))`,
+                  top: `${(1 - m.valence) * 100}%`,
+                }}
               >
                 <motion.button
                   variants={zoneVar}
