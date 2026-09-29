@@ -837,7 +837,23 @@ function normalizeUserContext(rawContext = {}) {
   const gender = String(rawContext.gender ?? "unspecified")
     .trim()
     .toLowerCase();
-  const moodLevel = clamp(Number(rawContext.moodLevel ?? 50), 0, 100);
+  // moodValence/moodEnergy come from the 2D vibe pad (web). Older clients (mobile)
+  // only ever sent a single moodLevel, which behaved as an energy dial — honor
+  // that as a fallback for moodEnergy so those clients keep working unchanged,
+  // with valence defaulting to neutral since they never expressed one.
+  const rawMoodValence = Number(rawContext.moodValence);
+  const rawMoodEnergy = Number(rawContext.moodEnergy);
+  const legacyMoodLevel = Number(rawContext.moodLevel);
+  const moodValence = clamp(Number.isFinite(rawMoodValence) ? rawMoodValence : 50, 0, 100);
+  const moodEnergy = clamp(
+    Number.isFinite(rawMoodEnergy)
+      ? rawMoodEnergy
+      : Number.isFinite(legacyMoodLevel)
+        ? legacyMoodLevel
+        : 50,
+    0,
+    100
+  );
   const accountAgeYears = Math.max(0, Number(rawContext.accountAgeYears ?? 0));
   const ageRaw = Number(rawContext.age);
   const age = Number.isFinite(ageRaw) && ageRaw > 0 ? Math.round(ageRaw) : null;
@@ -856,7 +872,8 @@ function normalizeUserContext(rawContext = {}) {
     weather: weather || "clear",
     gender,
     age,
-    moodLevel,
+    moodValence,
+    moodEnergy,
     nostalgiaSlider,
     accountAgeYears: Number.isFinite(accountAgeYears) ? accountAgeYears : 0,
     tempC: Number.isFinite(tempC) ? tempC : null,
@@ -961,19 +978,24 @@ function getContextSignalAdjustment(candidate, context, musicalScore) {
     }
   }
 
-  if (userContext.moodLevel <= 35) {
-    if ((Number(candidate.energy) || 1) <= 0.55) {
-      adjustments.moodBoost += 2;
-      logicLog.push(`Boosted ${candidate.name} for mellow mood setting.`);
-    } else if ((Number(candidate.energy) || 0) >= 0.8) {
-      adjustments.moodBoost -= 1.2;
+  // Vibe pad match: the user picks a target point on the valence/energy plane
+  // (the 2D "vibe" control); candidates near that point in the same space get
+  // boosted, proportional to how close they land, tapering to nothing past a
+  // generous radius rather than a hard cutoff.
+  if (Number.isFinite(candidate.valence) && Number.isFinite(candidate.energy)) {
+    const targetValence01 = userContext.moodValence / 100;
+    const targetEnergy01 = userContext.moodEnergy / 100;
+    const distance = Math.sqrt(
+      (candidate.valence - targetValence01) ** 2 + (candidate.energy - targetEnergy01) ** 2
+    );
+    const moodMatch = Math.max(0, 1 - distance / 0.75);
+    if (moodMatch > 0) {
+      adjustments.moodBoost += moodMatch * 3;
     }
-  } else if (userContext.moodLevel >= 65) {
-    if ((Number(candidate.energy) || 0) >= 0.7 || (Number(candidate.danceability) || 0) >= 0.65) {
-      adjustments.moodBoost += 2.2;
-      logicLog.push(`Boosted ${candidate.name} for hype mood setting.`);
-    } else if ((Number(candidate.energy) || 1) <= 0.45) {
-      adjustments.moodBoost -= 1.1;
+    if (moodMatch > 0.6) {
+      logicLog.push(`Boosted ${candidate.name} for matching the picked vibe (valence/energy fit).`);
+    } else if (distance > 1.1) {
+      adjustments.moodBoost -= 1;
     }
   }
 
@@ -1394,10 +1416,98 @@ function getRejectedReasonMessage(result) {
   return reason.message ?? "Request failed";
 }
 
+// Audio features and artist genres are immutable per track/artist, so they're
+// cached across all sessions and users (unlike sourceSliceCache, which is
+// per-token) instead of being re-fetched from Spotify on every recommendation call.
+const TRACK_METADATA_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const TRACK_METADATA_CACHE_MAX_SIZE = 4000;
+const TRACK_METADATA_CACHE_TRIM_TO = 3000;
+
+function trimCacheIfNeeded(cache) {
+  if (cache.size <= TRACK_METADATA_CACHE_MAX_SIZE) {
+    return;
+  }
+  const entries = [...cache.entries()].sort(
+    (a, b) => (a[1].cachedAtMs ?? 0) - (b[1].cachedAtMs ?? 0)
+  );
+  const trimCount = cache.size - TRACK_METADATA_CACHE_TRIM_TO;
+  for (const [staleKey] of entries.slice(0, trimCount)) {
+    cache.delete(staleKey);
+  }
+}
+
 export default class VibeEngine {
   constructor(sessionStore) {
     this.sessionStore = sessionStore;
     this.sourceSliceCache = new Map();
+    this.audioFeatureCache = new Map();
+    this.artistGenreCache = new Map();
+  }
+
+  async getAudioFeaturesWithCache(accessToken, trackIds) {
+    const uniqueIds = [...new Set(trackIds.filter(Boolean))];
+    const nowMs = Date.now();
+    const result = {};
+    const missingIds = [];
+
+    for (const trackId of uniqueIds) {
+      const cached = this.audioFeatureCache.get(trackId);
+      if (cached && nowMs - cached.cachedAtMs <= TRACK_METADATA_CACHE_TTL_MS) {
+        result[trackId] = cached.value;
+      } else {
+        missingIds.push(trackId);
+      }
+    }
+
+    if (missingIds.length > 0) {
+      const fetched = await getAudioFeaturesByTrackIds(accessToken, missingIds).catch((error) => {
+        console.error("[VibeEngine] getAudioFeaturesByTrackIds failed:", error.message);
+        return {};
+      });
+      for (const trackId of missingIds) {
+        const value = fetched[trackId];
+        if (value) {
+          this.audioFeatureCache.set(trackId, { cachedAtMs: nowMs, value });
+          result[trackId] = value;
+        }
+      }
+      trimCacheIfNeeded(this.audioFeatureCache);
+    }
+
+    return result;
+  }
+
+  async getArtistsWithCache(accessToken, artistIds) {
+    const uniqueIds = [...new Set(artistIds.filter(Boolean))];
+    const nowMs = Date.now();
+    const result = {};
+    const missingIds = [];
+
+    for (const artistId of uniqueIds) {
+      const cached = this.artistGenreCache.get(artistId);
+      if (cached && nowMs - cached.cachedAtMs <= TRACK_METADATA_CACHE_TTL_MS) {
+        result[artistId] = cached.value;
+      } else {
+        missingIds.push(artistId);
+      }
+    }
+
+    if (missingIds.length > 0) {
+      const fetched = await getArtistsByIds(accessToken, missingIds).catch((error) => {
+        console.error("[VibeEngine] getArtistsByIds failed:", error.message);
+        return {};
+      });
+      for (const artistId of missingIds) {
+        const value = fetched[artistId];
+        if (value) {
+          this.artistGenreCache.set(artistId, { cachedAtMs: nowMs, value });
+          result[artistId] = value;
+        }
+      }
+      trimCacheIfNeeded(this.artistGenreCache);
+    }
+
+    return result;
   }
 
   buildSourceCacheKey(accessToken, sourceKey) {
@@ -1455,14 +1565,8 @@ export default class VibeEngine {
     const trackIds = [currentTrack?.id, ...tracks.map((track) => track.id)].filter(Boolean);
 
     const [artistsById, featuresByTrackId] = await Promise.all([
-      getArtistsByIds(accessToken, artistIds).catch((error) => {
-        console.error("[VibeEngine] getArtistsByIds failed:", error.message);
-        return {};
-      }),
-      getAudioFeaturesByTrackIds(accessToken, trackIds).catch((error) => {
-        console.error("[VibeEngine] getAudioFeaturesByTrackIds failed:", error.message);
-        return {};
-      })
+      this.getArtistsWithCache(accessToken, artistIds),
+      this.getAudioFeaturesWithCache(accessToken, trackIds)
     ]);
 
     const enrich = (track) => {
@@ -1546,7 +1650,7 @@ export default class VibeEngine {
 
     const [artistsByIdResult, recentEventsResult, queueResult, topTracksResult, currentAudioFeaturesResult] =
       await Promise.allSettled([
-        getArtistsByIds(accessToken, seedArtistIdsTwo).catch(() => ({})),
+        this.getArtistsWithCache(accessToken, seedArtistIdsTwo).catch(() => ({})),
         getRecentlyPlayedTrackEvents(accessToken, { limit: 50 }),
         getPlaybackQueue(accessToken),
         this.loadSourceWithCache(
@@ -1555,13 +1659,7 @@ export default class VibeEngine {
           1000 * 60 * 2,
           () => getUserTopTracks(accessToken, { limit: 12, timeRange: "short_term" })
         ),
-        getAudioFeaturesByTrackIds(accessToken, [currentTrack.id]).catch((error) => {
-          console.error(
-            "[VibeEngine] getAudioFeaturesByTrackIds (current track) failed:",
-            error.message
-          );
-          return {};
-        })
+        this.getAudioFeaturesWithCache(accessToken, [currentTrack.id])
       ]);
 
     const currentFeatMap =
@@ -1840,6 +1938,9 @@ export default class VibeEngine {
       recentUris,
       recentHistoryUriSet,
       recentSuggestedUrisSet: new Set(recentSuggestedList),
+      // How many tracks this session has already suggested — drives Energy Arc
+      // Planning's warmup/climax/winddown phase (see energyArcPlanning.js).
+      sessionTrackIndex: recentSuggestedList.length,
       sessionPenalty: {
         artistPenalty: session.artistPenalty ?? {},
         genrePenalty: session.genrePenalty ?? {},
@@ -2012,6 +2113,7 @@ export default class VibeEngine {
       recentUris,
       recentHistoryUriSet,
       recentSuggestedUrisSet: new Set(recentSuggestedList),
+      sessionTrackIndex: recentSuggestedList.length,
       sessionPenalty: {
         artistPenalty: session.artistPenalty ?? {},
         genrePenalty: session.genrePenalty ?? {},

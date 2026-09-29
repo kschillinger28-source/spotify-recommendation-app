@@ -1741,6 +1741,80 @@
       @media (prefers-reduced-motion: reduce) {
         .btn-primary-cta:hover:not(:disabled) { transform: none; }
       }
+
+      /* Vibe pad: 2D valence (x) / energy (y) picker, replacing the old single-axis mood slider. */
+      .mood-pad-field { display: flex; flex-direction: column; gap: 8px; }
+      .mood-pad {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        max-height: 220px;
+        border-radius: 16px;
+        background:
+          radial-gradient(circle at var(--mood-pad-x, 50%) calc(100% - var(--mood-pad-y, 50%)), rgba(30, 215, 96, 0.22), transparent 60%),
+          var(--bg-elevated);
+        box-shadow: inset 0 0 0 1px #333;
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+        overflow: hidden;
+      }
+      .mood-pad:active { cursor: grabbing; }
+      .mood-pad:focus-visible { outline: 2px solid var(--text-base); outline-offset: 2px; }
+      .mood-pad::before,
+      .mood-pad::after {
+        content: "";
+        position: absolute;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .mood-pad::before { left: 0; right: 0; top: 50%; height: 1px; }
+      .mood-pad::after { top: 0; bottom: 0; left: 50%; width: 1px; }
+      .mood-pad-zone {
+        position: absolute;
+        padding: 4px 10px;
+        border-radius: 9999px;
+        background: rgba(24, 24, 24, 0.7);
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      .mood-pad-zone:hover { color: var(--text-base); background: rgba(24, 24, 24, 0.9); }
+      .mood-pad-zone--euphoric { top: 10px; right: 10px; }
+      .mood-pad-zone--intense { top: 10px; left: 10px; }
+      .mood-pad-zone--chill { bottom: 10px; right: 10px; }
+      .mood-pad-zone--melancholy { bottom: 10px; left: 10px; }
+      .mood-pad-axis {
+        position: absolute;
+        color: var(--text-subtle);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        pointer-events: none;
+      }
+      .mood-pad-axis--energy { top: 50%; left: 6px; transform: translateY(-50%) rotate(-90deg) translateX(-50%); transform-origin: left center; }
+      .mood-pad-axis--valence { bottom: 6px; left: 50%; transform: translateX(-50%); }
+      .mood-pad-orb {
+        position: absolute;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        left: var(--mood-pad-x, 50%);
+        top: calc(100% - var(--mood-pad-y, 50%));
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle at 35% 30%, #eafff2, var(--accent) 70%);
+        box-shadow: 0 0 18px 4px rgba(30, 215, 96, 0.55);
+        pointer-events: none;
+        transition: box-shadow 0.2s ease;
+      }
+      .mood-pad.is-dragging .mood-pad-orb { box-shadow: 0 0 26px 8px rgba(30, 215, 96, 0.75); }
+      .mood-pad[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+      @media (prefers-reduced-motion: reduce) {
+        .mood-pad-orb { transition: none; }
+      }
     </style>
   </head>
   <body>
@@ -1899,10 +1973,28 @@
           Heuristic DJ brain: scores queue fit, mood, and release-era (nostalgia slider) — not machine learning.
         </p>
         <div id="environmentContextBadges" class="context-badges"></div>
-        <div class="field">
-          <label for="contextMoodLevel">Mood</label>
-          <input id="contextMoodLevel" type="range" min="0" max="100" step="1" value="50" />
-          <p id="contextMoodLabel" class="hint">Balanced (50)</p>
+        <div class="field mood-pad-field">
+          <label id="moodPadFieldLabel">Vibe</label>
+          <div
+            id="moodPad"
+            class="mood-pad"
+            role="slider"
+            tabindex="0"
+            aria-labelledby="moodPadFieldLabel"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="50"
+            aria-valuetext="Balanced"
+          >
+            <div class="mood-pad-zone mood-pad-zone--euphoric" data-zone="euphoric">Euphoric</div>
+            <div class="mood-pad-zone mood-pad-zone--intense" data-zone="intense">Intense</div>
+            <div class="mood-pad-zone mood-pad-zone--chill" data-zone="chill">Chill</div>
+            <div class="mood-pad-zone mood-pad-zone--melancholy" data-zone="melancholy">Melancholy</div>
+            <span class="mood-pad-axis mood-pad-axis--energy">Energy</span>
+            <span class="mood-pad-axis mood-pad-axis--valence">Sad &#8594; Happy</span>
+            <div id="moodPadOrb" class="mood-pad-orb" aria-hidden="true"></div>
+          </div>
+          <p id="contextMoodLabel" class="hint">Balanced &middot; energy 50 &middot; valence 50</p>
         </div>
         <div class="field">
           <label for="contextNostalgiaSlider">Nostalgia timeline</label>

@@ -31,7 +31,13 @@ It does **not** include the recommendation engine yet.
    - Client ID
    - Client Secret
 4. In **Redirect URIs**, add:
-  - `http://localhost:3000/auth/spotify/callback`
+  - `http://127.0.0.1:3000/auth/spotify/callback`
+
+   Use the literal IP `127.0.0.1`, not `localhost`. Spotify stopped accepting
+   `localhost` and other non-loopback HTTP redirect URIs on 27 Nov 2025 — a
+   dashboard entry or `.env` value using `localhost` will now fail to
+   authenticate. Access the app itself via `http://127.0.0.1:3000` too (not
+   `localhost`), since the two are different origins for cookie purposes.
 5. Save changes.
 
 ## 2) Configure Environment Variables
@@ -47,11 +53,11 @@ Edit `.env` with your actual Spotify credentials:
 ```env
 NODE_ENV=development
 PORT=3000
-APP_BASE_URL=http://localhost:3000
+APP_BASE_URL=http://127.0.0.1:3000
 
 SPOTIFY_CLIENT_ID=your_actual_client_id
 SPOTIFY_CLIENT_SECRET=your_actual_client_secret
-SPOTIFY_REDIRECT_URI=http://localhost:3000/auth/spotify/callback
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/auth/spotify/callback
 SPOTIFY_SCOPES=user-read-email user-read-private user-top-read user-read-playback-state user-read-currently-playing user-modify-playback-state
 ```
 
@@ -75,22 +81,22 @@ Production-like run:
 npm start
 ```
 
-Server base URL: `http://localhost:3000`
+Server base URL: `http://127.0.0.1:3000`
 
 ## 5) Test Spotify OAuth Flow
 
 1. Start the server.
 2. Open:
-   - `http://localhost:3000/auth/spotify/login`
+   - `http://127.0.0.1:3000/auth/spotify/login`
 3. Sign in to Spotify and approve scopes.
 4. Spotify redirects to callback:
-   - `http://localhost:3000/auth/spotify/callback?code=...&state=...`
+   - `http://127.0.0.1:3000/auth/spotify/callback?code=...&state=...`
 5. The callback endpoint returns token JSON.
 
 ## 6) Use Queue + Seek UI
 
 1. Open:
-   - `http://localhost:3000`
+   - `http://127.0.0.1:3000`
 2. Choose provider:
    - `Spotify` works today.
    - `SoundCloud` and `Apple Music` are marked coming soon.

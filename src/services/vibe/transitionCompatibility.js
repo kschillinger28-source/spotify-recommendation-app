@@ -254,25 +254,27 @@ function abruptTransitionPenalty(current, candidate) {
   let severity = 1.0;
 
   // BPM: ±20% is reasonable, >20% starts getting harsh
-  const tempoDiffPercent = current.tempo && candidate.tempo
+  const tempoDiffPercent = Number.isFinite(current.tempo) && Number.isFinite(candidate.tempo) && current.tempo > 0
     ? Math.abs(current.tempo - candidate.tempo) / current.tempo * 100
     : 0;
   if (tempoDiffPercent > 20) jumpCount++;
 
   // Energy: >0.3 delta is a significant jump
-  const energyDelta = current.energy && candidate.energy
+  // (uses Number.isFinite, not truthy checks — energy/loudness/acousticness of
+  // exactly 0 are valid Spotify values and must not be treated as "missing data")
+  const energyDelta = Number.isFinite(current.energy) && Number.isFinite(candidate.energy)
     ? Math.abs(current.energy - candidate.energy)
     : 0;
   if (energyDelta > 0.3) jumpCount++;
 
   // Loudness: >3dB is noticeable
-  const loudnessDelta = current.loudness && candidate.loudness
+  const loudnessDelta = Number.isFinite(current.loudness) && Number.isFinite(candidate.loudness)
     ? Math.abs(current.loudness - candidate.loudness)
     : 0;
   if (loudnessDelta > 3) jumpCount++;
 
   // Acousticness: significant character change
-  const acusticDelta = current.acousticness && candidate.acousticness
+  const acusticDelta = Number.isFinite(current.acousticness) && Number.isFinite(candidate.acousticness)
     ? Math.abs(current.acousticness - candidate.acousticness)
     : 0;
   if (acusticDelta > 0.4) jumpCount++;
@@ -361,13 +363,14 @@ function computeKeyCompatibility(key1, mode1, key2, mode2) {
   const camelot1 = camelotMap[modeStr1][key1] || 0;
   const camelot2 = camelotMap[modeStr2][key2] || 0;
 
-  // Compatible keys: 0, 1, 7 steps away on the wheel (1.0, 0.9, 0.7 respectively)
+  // Compatible keys: 0 or 1 step away on the 12-position Camelot wheel (1.0, 0.9
+  // respectively). normalizedDist tops out at 6 (12/2), so every other distance
+  // decays smoothly on the curve below.
   const dist = Math.abs(camelot1 - camelot2);
   const normalizedDist = Math.min(dist, 12 - dist); // Wrap around
 
   if (normalizedDist === 0) return 1.0;
   if (normalizedDist === 1) return 0.9;
-  if (normalizedDist === 7) return 0.7;
 
   // Other distances decay smoothly
   return Math.pow(0.95, normalizedDist);

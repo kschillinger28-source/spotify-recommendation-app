@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Router } from "express";
 import { env } from "../config/env.js";
+import { logger } from "../middleware/requestLogger.js";
 import {
   addTrackToQueue,
   buildSpotifyAuthorizeUrl,
@@ -518,18 +519,25 @@ router.get("/spotify/callback", async (req, res) => {
   const code = req.query.code;
   const state = String(req.query.state ?? "");
   const storedState = req.cookies[SPOTIFY_STATE_COOKIE];
+  // Spotify sends ?error=... (e.g. "access_denied") instead of a code when it
+  // can't authorize the request — surface that instead of a generic message,
+  // since it was previously discarded and made this failure mode impossible
+  // to diagnose from the client side.
+  const spotifyError = req.query.error ? String(req.query.error) : null;
 
   if (!code || !state) {
-    if (!wantsJsonCallbackResponse(req)) {
-      return res.redirect(
-        buildOAuthCallbackRedirectUrl({
-          error: "Missing code or state from Spotify callback."
-        })
-      );
-    }
-    return res.status(400).json({
-      error: "Missing code or state from Spotify callback."
+    logger.warn("spotify_oauth_callback_no_code", {
+      spotifyError,
+      hasCode: Boolean(code),
+      hasState: Boolean(state)
     });
+    const message = spotifyError
+      ? `Spotify did not authorize the request (${spotifyError}). If your app is in Development Mode, make sure this Spotify account is added under the app's "Users and Access" list in the Developer Dashboard.`
+      : "Missing code or state from Spotify callback.";
+    if (!wantsJsonCallbackResponse(req)) {
+      return res.redirect(buildOAuthCallbackRedirectUrl({ error: message }));
+    }
+    return res.status(400).json({ error: message });
   }
 
   pruneExpiredOauthStates();
@@ -540,6 +548,12 @@ router.get("/spotify/callback", async (req, res) => {
     Number.isFinite(serverStateExpiryMs) && serverStateExpiryMs > nowMs;
 
   if (!isCookieStateValid && !isServerStateValid) {
+    logger.warn("spotify_oauth_callback_invalid_state", {
+      hasCookie: Boolean(storedState),
+      cookiePresentButMismatched: Boolean(storedState) && storedState !== state,
+      serverStateKnown: issuedOauthStates.has(state),
+      serverStateExpired: issuedOauthStates.has(state) && !isServerStateValid
+    });
     if (!wantsJsonCallbackResponse(req)) {
       return res.redirect(
         buildOAuthCallbackRedirectUrl({

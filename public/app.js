@@ -26,7 +26,8 @@ const DJ_SESSION_ID_KEY = "spotify_helper_dj_session_id";
 const DJ_REMIX_MODE_KEY = "spotify_helper_dj_remix_mode";
 const DJ_AUTOPILOT_ENABLED_KEY = "spotify_helper_dj_autopilot_enabled";
 const ADVANCED_SETTINGS_VISIBLE_KEY = "spotify_helper_advanced_settings_visible";
-const CONTEXT_MOOD_LEVEL_KEY = "spotify_helper_context_mood_level";
+const CONTEXT_MOOD_VALENCE_KEY = "spotify_helper_context_mood_valence";
+const CONTEXT_MOOD_ENERGY_KEY = "spotify_helper_context_mood_energy";
 const CONTEXT_NOSTALGIA_SLIDER_KEY = "spotify_helper_context_nostalgia_slider";
 const LYRIC_OFFSET_MS_KEY = "spotify_helper_lyric_offset_ms";
 const ACTIVE_APP_VIEW_KEY = "spotify_helper_active_app_view";
@@ -98,7 +99,8 @@ const elements = {
   refreshNowPlayingButton: document.getElementById("refreshNowPlayingButton"),
   generateRecommendationButton: document.getElementById("generateRecommendationButton"),
   environmentContextBadges: document.getElementById("environmentContextBadges"),
-  contextMoodLevel: document.getElementById("contextMoodLevel"),
+  moodPad: document.getElementById("moodPad"),
+  moodPadOrb: document.getElementById("moodPadOrb"),
   contextMoodLabel: document.getElementById("contextMoodLabel"),
   contextNostalgiaSlider: document.getElementById("contextNostalgiaSlider"),
   contextNostalgiaLabel: document.getElementById("contextNostalgiaLabel"),
@@ -144,6 +146,10 @@ let smartQueueInFlight = false;
 const NOW_PLAYING_POLL_ACTIVE_MS = 1000;
 const NOW_PLAYING_POLL_IDLE_MS = 1800;
 const PLAYBACK_STATE_CACHE_TTL_MS = 650;
+// Autopilot and flow-injection ticks read this same cache instead of forcing
+// their own fetch, so they piggyback on whatever the now-playing loop (which
+// already polls at NOW_PLAYING_POLL_ACTIVE_MS while either is active) last fetched.
+const LIVE_ACTION_CACHE_TTL_MS = 700;
 let autoplayIntervalId = null;
 let autoplayInFlight = false;
 let lastAutoplayTriggerTrackUri = null;
@@ -580,21 +586,140 @@ function setActiveAppView(viewName) {
   });
 }
 
-function moodLabelFromLevel(level) {
-  const value = clamp(Number(level) || 0, 0, 100);
-  if (value <= 25) {
-    return "Mellow";
-  }
-  if (value <= 45) {
-    return "Chill";
-  }
-  if (value <= 65) {
+// 2D vibe pad: valence (x, 0=sad/calm mood, 100=happy mood) and energy
+// (y, 0=low intensity, 100=high intensity), mirroring the quadrants
+// VibeEngine's moodSpaceContinuity scoring already uses server-side.
+const moodPadState = { valence: 50, energy: 50 };
+const MOOD_PAD_ZONE_TARGETS = {
+  euphoric: { valence: 82, energy: 82 },
+  intense: { valence: 18, energy: 82 },
+  chill: { valence: 82, energy: 18 },
+  melancholy: { valence: 18, energy: 18 }
+};
+
+function moodZoneLabel(valence, energy) {
+  const v = clamp(Number(valence) || 0, 0, 100);
+  const e = clamp(Number(energy) || 0, 0, 100);
+  if (Math.hypot(v - 50, e - 50) < 12) {
     return "Balanced";
   }
-  if (value <= 85) {
-    return "Upbeat";
+  const isHappy = v > 50;
+  const isEnergetic = e > 50;
+  if (isHappy && isEnergetic) {
+    return "Euphoric";
   }
-  return "Hype";
+  if (!isHappy && isEnergetic) {
+    return "Intense";
+  }
+  if (isHappy && !isEnergetic) {
+    return "Chill";
+  }
+  return "Melancholy";
+}
+
+function renderMoodPad() {
+  if (!elements.moodPad) {
+    return;
+  }
+  const { valence, energy } = moodPadState;
+  elements.moodPad.style.setProperty("--mood-pad-x", `${valence}%`);
+  elements.moodPad.style.setProperty("--mood-pad-y", `${energy}%`);
+  const label = moodZoneLabel(valence, energy);
+  elements.moodPad.setAttribute("aria-valuenow", String(Math.round((valence + energy) / 2)));
+  elements.moodPad.setAttribute(
+    "aria-valuetext",
+    `${label}, energy ${Math.round(energy)}, valence ${Math.round(valence)}`
+  );
+  if (elements.contextMoodLabel) {
+    elements.contextMoodLabel.textContent = `${label} · energy ${Math.round(
+      energy
+    )} · valence ${Math.round(valence)}`;
+  }
+}
+
+function setMoodPadPosition(valence, energy, { persist = true } = {}) {
+  moodPadState.valence = clamp(Number(valence) || 0, 0, 100);
+  moodPadState.energy = clamp(Number(energy) || 0, 0, 100);
+  renderMoodPad();
+  if (persist) {
+    saveInputsToLocalStorage();
+  }
+}
+
+function moodPadPointFromClientCoords(clientX, clientY) {
+  const rect = elements.moodPad.getBoundingClientRect();
+  const valence = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
+  // Pad y=0 is the top of the element, but energy=0 should sit at the bottom.
+  const energy = clamp((1 - (clientY - rect.top) / rect.height) * 100, 0, 100);
+  return { valence, energy };
+}
+
+let moodPadDragging = false;
+
+function handleMoodPadPointerMove(event) {
+  if (!moodPadDragging) {
+    return;
+  }
+  const point = moodPadPointFromClientCoords(event.clientX, event.clientY);
+  setMoodPadPosition(point.valence, point.energy);
+}
+
+function stopMoodPadDrag() {
+  if (!moodPadDragging) {
+    return;
+  }
+  moodPadDragging = false;
+  elements.moodPad?.classList.remove("is-dragging");
+  window.removeEventListener("pointermove", handleMoodPadPointerMove);
+  window.removeEventListener("pointerup", stopMoodPadDrag);
+}
+
+function initMoodPad() {
+  if (!elements.moodPad) {
+    return;
+  }
+  elements.moodPad.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".mood-pad-zone")) {
+      return;
+    }
+    moodPadDragging = true;
+    elements.moodPad.classList.add("is-dragging");
+    elements.moodPad.focus();
+    const point = moodPadPointFromClientCoords(event.clientX, event.clientY);
+    setMoodPadPosition(point.valence, point.energy);
+    window.addEventListener("pointermove", handleMoodPadPointerMove);
+    window.addEventListener("pointerup", stopMoodPadDrag);
+    event.preventDefault();
+  });
+
+  elements.moodPad.addEventListener("click", (event) => {
+    const zoneEl = event.target.closest(".mood-pad-zone");
+    if (!zoneEl) {
+      return;
+    }
+    const target = MOOD_PAD_ZONE_TARGETS[zoneEl.dataset.zone];
+    if (target) {
+      setMoodPadPosition(target.valence, target.energy);
+    }
+  });
+
+  elements.moodPad.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 10 : 5;
+    let { valence, energy } = moodPadState;
+    if (event.key === "ArrowLeft") {
+      valence -= step;
+    } else if (event.key === "ArrowRight") {
+      valence += step;
+    } else if (event.key === "ArrowUp") {
+      energy += step;
+    } else if (event.key === "ArrowDown") {
+      energy -= step;
+    } else {
+      return;
+    }
+    setMoodPadPosition(valence, energy);
+    event.preventDefault();
+  });
 }
 
 const SOUTHERN_HEMISPHERE_COUNTRY_CODES = new Set([
@@ -959,7 +1084,8 @@ function nostalgiaLabelFromLevel(n) {
 
 function buildUserContext() {
   const signals = getEnvironmentSignalsSync();
-  const moodLevel = clamp(Number(elements.contextMoodLevel.value || 50), 0, 100);
+  const moodValence = clamp(Number(moodPadState.valence), 0, 100);
+  const moodEnergy = clamp(Number(moodPadState.energy), 0, 100);
   const nostalgiaSlider = clamp(
     Number(elements.contextNostalgiaSlider?.value ?? 50),
     0,
@@ -985,7 +1111,8 @@ function buildUserContext() {
     age: Number(elements.listenerAge?.value) || null,
     gender: elements.listenerGender?.value || "unspecified",
     emailDomain,
-    moodLevel,
+    moodValence,
+    moodEnergy,
     nostalgiaSlider
   };
 }
@@ -1085,7 +1212,7 @@ function renderContextBadges() {
     return;
   }
   const context = buildUserContext();
-  const moodLabel = moodLabelFromLevel(context.moodLevel);
+  const moodLabel = moodZoneLabel(context.moodValence, context.moodEnergy);
   const tempC = Number(context.tempC);
   const useFahrenheit = resolveOutdoorTempDisplayFahrenheit();
   const tempBadgeText = formatOutdoorTempBadge(tempC, useFahrenheit);
@@ -1116,10 +1243,7 @@ function renderContextBadges() {
 
 function updateEnvironmentContextBar() {
   const context = buildUserContext();
-  const moodLabel = moodLabelFromLevel(context.moodLevel);
-  elements.contextMoodLabel.textContent = `${moodLabel} (${Math.round(
-    context.moodLevel
-  )})`;
+  renderMoodPad();
   if (elements.contextNostalgiaLabel && elements.contextNostalgiaSlider) {
     const nl = nostalgiaLabelFromLevel(context.nostalgiaSlider);
     elements.contextNostalgiaLabel.textContent = `${nl} (${Math.round(
@@ -2565,7 +2689,7 @@ function renderNowPlaying(playbackPayload) {
 
 async function getPlaybackState(
   accessToken,
-  { force = false, cacheTtlMs = PLAYBACK_STATE_CACHE_TTL_MS } = {}
+  { cacheTtlMs = PLAYBACK_STATE_CACHE_TTL_MS } = {}
 ) {
   const token = String(accessToken ?? "").trim();
   if (!token) {
@@ -2573,7 +2697,6 @@ async function getPlaybackState(
   }
 
   const isFresh =
-    !force &&
     playbackStateCache.payload &&
     playbackStateCache.token === token &&
     Date.now() - playbackStateCache.fetchedAtMs <= Math.max(0, cacheTtlMs);
@@ -2724,8 +2847,7 @@ async function runAutopilotTick() {
     }
 
     const playbackState = await getPlaybackState(accessToken, {
-      force: true,
-      cacheTtlMs: 250
+      cacheTtlMs: LIVE_ACTION_CACHE_TTL_MS
     });
     const playback = playbackState?.playback;
     const track = playback?.item;
@@ -2814,8 +2936,7 @@ async function runFlowInjectionWatcherTick() {
     }
 
     const playbackState = await getPlaybackState(accessToken, {
-      force: true,
-      cacheTtlMs: 200
+      cacheTtlMs: LIVE_ACTION_CACHE_TTL_MS
     });
     const currentUri = playbackState?.playback?.item?.uri;
     if (!currentUri) {
@@ -3117,10 +3238,8 @@ function saveInputsToLocalStorage() {
     DJ_AUTOPILOT_ENABLED_KEY,
     elements.djAutopilotEnabled.checked ? "true" : "false"
   );
-  localStorage.setItem(
-    CONTEXT_MOOD_LEVEL_KEY,
-    String(Math.round(Number(elements.contextMoodLevel.value || 50)))
-  );
+  localStorage.setItem(CONTEXT_MOOD_VALENCE_KEY, String(Math.round(moodPadState.valence)));
+  localStorage.setItem(CONTEXT_MOOD_ENERGY_KEY, String(Math.round(moodPadState.energy)));
   if (elements.contextNostalgiaSlider) {
     localStorage.setItem(
       CONTEXT_NOSTALGIA_SLIDER_KEY,
@@ -3157,7 +3276,11 @@ function loadInputsFromLocalStorage() {
     (localStorage.getItem(DJ_REMIX_MODE_KEY) ?? "false") === "true";
   elements.djAutopilotEnabled.checked =
     (localStorage.getItem(DJ_AUTOPILOT_ENABLED_KEY) ?? "false") === "true";
-  elements.contextMoodLevel.value = localStorage.getItem(CONTEXT_MOOD_LEVEL_KEY) ?? "50";
+  setMoodPadPosition(
+    Number(localStorage.getItem(CONTEXT_MOOD_VALENCE_KEY) ?? 50),
+    Number(localStorage.getItem(CONTEXT_MOOD_ENERGY_KEY) ?? 50),
+    { persist: false }
+  );
   if (elements.contextNostalgiaSlider) {
     elements.contextNostalgiaSlider.value =
       localStorage.getItem(CONTEXT_NOSTALGIA_SLIDER_KEY) ?? "50";
@@ -3277,7 +3400,10 @@ function updateProviderUi() {
   elements.refreshNowPlayingButton.disabled = !providerSupported;
   elements.djRemixMode.disabled = !providerSupported;
   elements.djAutopilotEnabled.disabled = !providerSupported;
-  elements.contextMoodLevel.disabled = !providerSupported;
+  elements.moodPad?.setAttribute("aria-disabled", String(!providerSupported));
+  if (elements.moodPad) {
+    elements.moodPad.tabIndex = providerSupported ? 0 : -1;
+  }
   if (elements.contextNostalgiaSlider) {
     elements.contextNostalgiaSlider.disabled = !providerSupported;
   }
@@ -4981,10 +5107,7 @@ function bindEvents() {
 
   // Initialize search filters and pagination UI
   updateSearchFilterElements();
-  elements.contextMoodLevel.addEventListener("input", () => {
-    updateEnvironmentContextBar();
-    saveInputsToLocalStorage();
-  });
+  initMoodPad();
   elements.contextNostalgiaSlider?.addEventListener("input", () => {
     updateEnvironmentContextBar();
     saveInputsToLocalStorage();
